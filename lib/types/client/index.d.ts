@@ -101,7 +101,7 @@ declare const en: {
     readonly activeGeneration: "Runtime generation";
     readonly activeGenerationValue: "Generation {generation}";
     readonly updates: "Plugin updates";
-    readonly updatesHint: "Check npm for a newer release, install it into this DSH profile, and restart DSH Web automatically.";
+    readonly updatesHint: "Check for a newer release, install it into this DSH profile, and restart DSH Web automatically.";
     readonly manualUpdate: "Manual update";
     readonly manualUpdateHint: "Run this command in your terminal to install the latest release into this DSH profile.";
     readonly copy: "Copy";
@@ -123,7 +123,7 @@ declare const en: {
     readonly updateUnsupported: "In-app updates are unavailable for this installation.";
     readonly updateReasonProfileNotFound: "The running plugin could not be matched to a DSH profile installation.";
     readonly updateReasonNotDependency: "The plugin is not a direct dependency of this DSH profile.";
-    readonly updateReasonLocalSource: "This profile uses a local, workspace, URL, or git installation; update that source manually so local work is not overwritten.";
+    readonly updateReasonLocalSource: "This profile uses a local, workspace, or non-GitHub URL installation; update that source manually so local work is not overwritten.";
     readonly updateReasonReadOnly: "The profile package manifest is read-only.";
     readonly updateReasonPnpm: "pnpm is unavailable in the DSH execution environment.";
     readonly updateReasonPlatform: "Automatic restart is unavailable on this operating system.";

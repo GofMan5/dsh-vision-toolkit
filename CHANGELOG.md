@@ -4,6 +4,16 @@ All notable user-facing changes to DSH Vision Toolkit are documented in this fil
 
 ## [Unreleased]
 
+## [0.3.1] - fork
+
+### Added
+
+- **In-app updates work for git installations.** GitHub-hosted installs (`github:owner/repo`, `git+https://github.com/owner/repo`) now report as updatable in Settings instead of «In-app updates are unavailable»: **Check for updates** reads the repository's default-branch head through the GitHub API (tip commit) and raw content (that exact commit's `package.json`), and **Install update** runs a pnpm add pinned to the resolved commit — a floating spec alone keeps the stale lockfile resolution, so the pin guarantees fresh bytes. Rollback restores the backup lockfile and reinstalls frozen. Registry (npm) installs keep the existing flow; local, workspace, and non-GitHub URL installations remain unsupported, as before.
+
+### Changed
+
+- The Settings updates panel no longer claims git installations are unsupported, and its hint is source-neutral (registry or repository).
+
 ## [0.3.0] - fork
 
 ### Added

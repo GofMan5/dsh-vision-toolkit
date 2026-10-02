@@ -49,8 +49,6 @@ export declare class PasteImageController {
     private readonly listeners;
     private revision;
     private readonly verdicts;
-    /** Guards the synthetic replay paste from re-entering capture interception. */
-    private replaying;
     /** A paste awaiting the user's attach confirmation, rendered in the dock. */
     private pendingConfirm;
     /** Session-scoped “don't ask again”: later pastes attach immediately. */

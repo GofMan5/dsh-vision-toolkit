@@ -1,9 +1,12 @@
 /**
  * Profile-scoped self-update support for the Web Settings page.
  *
- * Only registry-installed copies are mutable. Local `link:`, `file:`, git,
- * URL, and workspace installs stay developer-owned and are reported as
- * unsupported instead of being replaced behind the user's back.
+ * Registry installs and GitHub-hosted git installs are mutable: registry
+ * flows resolve npm, git flows re-resolve the repository's current head and
+ * pin the install spec to the exact commit so pnpm always fetches fresh
+ * bytes. Local `link:`, `file:`, workspace, and non-GitHub URL installs
+ * stay developer-owned and are reported as unsupported instead of being
+ * replaced behind the user's back.
  * @module dsh-vision-toolkit/plugin-update
  */
 import type { Context } from '@deepseek-ai/cordis';
@@ -19,6 +22,8 @@ export interface PluginUpdateCapability {
 export interface PluginUpdateCheck extends PluginUpdateCapability {
     currentVersion: string;
     latestVersion?: string;
+    /** For git installations: the tip commit the latest version was read from. */
+    latestCommit?: string;
     updateAvailable: boolean;
     checkedAt: string;
 }
@@ -80,6 +85,20 @@ export interface PluginUpdateServiceOptions {
 export declare const PLUGIN_RESTART_HELPER_SOURCE: string;
 /** Compare two strict SemVer versions. */
 export declare function compareVersions(left: string, right: string): number;
+/** One git-hosted GitHub dependency the fork can update by re-resolving the remote head. */
+export interface GitInstallSource {
+    /** The exact profile dependency spec, without any `#ref` suffix. */
+    baseSpec: string;
+    owner: string;
+    repo: string;
+}
+/**
+ * Parse the GitHub-hosted dependency specs pnpm accepts: `github:owner/repo`,
+ * `github:owner/repo#ref`, and `git+https://github.com/owner/repo(.git)`.
+ * Everything else (local `file:`/`link:`, workspace paths, non-GitHub URLs)
+ * stays developer-owned and unsupported.
+ */
+export declare function gitInstallSource(spec: string): GitInstallSource | undefined;
 /** Profile-aware updater used by the same-origin Settings backend. */
 export declare class VisionToolkitPluginUpdateService {
     private readonly ctx;
@@ -110,7 +129,7 @@ export declare class VisionToolkitPluginUpdateService {
     private runPnpm;
     private rollbackInstall;
     private acquireLock;
-    /** Query the configured npm registry without mutating the profile. */
+    /** Query the update source without mutating the profile: npm for registry installs, GitHub for git installs. */
     check(): Promise<PluginUpdateCheck>;
     /** Install the currently published version, then restart when this process can do so safely. */
     installAndRestart(expectedVersion: string): Promise<PluginUpdateResult>;

@@ -185,7 +185,7 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-function imageFiles(data: DataTransfer | null): File[] {
+function pastedFiles(data: DataTransfer | null): File[] {
   if (data === null) return []
   const itemFiles = Array.from(data.items)
     .filter(item => item.kind === 'file')
@@ -236,6 +236,13 @@ function fileKindLabel(file: File): string {
   if (type.startsWith('image/')) return 'image'
   if (type.startsWith('video/')) return 'video'
   if (type.startsWith('audio/')) return 'audio'
+  if (type !== '') return 'document'
+  // Clipboard entries can carry an empty media type: fall back to the
+  // extension so an empty-typed .mp4 still labels as video.
+  const name = file.name.toLowerCase()
+  if (/\.(?:mp4|m4v|webm|mkv|mov|avi|3gp)$/u.test(name)) return 'video'
+  if (/\.(?:mp3|wav|m4a|aac|ogg|opus|flac)$/u.test(name)) return 'audio'
+  if (/\.(?:png|jpe?g|gif|webp|bmp|tiff|avif|heic|heif|svg)$/u.test(name)) return 'image'
   return 'document'
 }
 
@@ -264,8 +271,6 @@ export class PasteImageController {
     at: number
     pending: boolean
   }>()
-  /** Guards the synthetic replay paste from re-entering capture interception. */
-  private replaying = false
   /** A paste awaiting the user's attach confirmation, rendered in the dock. */
   private pendingConfirm: PasteConfirmState | undefined
   /** Session-scoped “don't ask again”: later pastes attach immediately. */
@@ -556,8 +561,7 @@ export class PasteImageController {
   }
 
   handlePaste(event: ClipboardEvent): boolean {
-    if (this.replaying) return false
-    const files = imageFiles(event.clipboardData)
+    const files = pastedFiles(event.clipboardData)
     if (files.length === 0) return false
     const target = event.target
     if (!(target instanceof HTMLTextAreaElement) || target.closest('[data-composer-card]') === null) return false

@@ -9,6 +9,7 @@ import type { SubprocessHandle, SubprocessOutputRead, SubprocessSpawnSpec } from
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   compareVersions,
+  gitInstallSource,
   PLUGIN_RESTART_HELPER_SOURCE,
   VisionToolkitPluginUpdateService,
   VISION_TOOLKIT_PACKAGE,
@@ -89,6 +90,162 @@ describe('plugin update version ordering', () => {
     expect(compareVersions('1.0.0', '1.0.0-rc.1')).toBeGreaterThan(0)
     expect(compareVersions('1.0.0-rc.2', '1.0.0-rc.10')).toBeLessThan(0)
     expect(compareVersions('v1.2.3', '1.2.3')).toBe(0)
+  })
+})
+
+describe('git install source parsing', () => {
+  it('parses github shorthand and git+https specs, ignoring refs and .git suffixes', () => {
+    expect(gitInstallSource('github:GofMan5/dsh-vision-toolkit')).toEqual({
+      baseSpec: 'github:GofMan5/dsh-vision-toolkit',
+      owner: 'GofMan5',
+      repo: 'dsh-vision-toolkit',
+    })
+    expect(gitInstallSource('github:GofMan5/dsh-vision-toolkit#0cd35b1d75fc4514e19d195f93e69f506f5fbaa9')).toEqual({
+      baseSpec: 'github:GofMan5/dsh-vision-toolkit',
+      owner: 'GofMan5',
+      repo: 'dsh-vision-toolkit',
+    })
+    expect(gitInstallSource('git+https://github.com/GofMan5/dsh-vision-toolkit.git')).toEqual({
+      baseSpec: 'git+https://github.com/GofMan5/dsh-vision-toolkit.git',
+      owner: 'GofMan5',
+      repo: 'dsh-vision-toolkit',
+    })
+    expect(gitInstallSource('git+https://github.com/GofMan5/dsh-vision-toolkit')).toEqual({
+      baseSpec: 'git+https://github.com/GofMan5/dsh-vision-toolkit.git',
+      owner: 'GofMan5',
+      repo: 'dsh-vision-toolkit',
+    })
+  })
+
+  it('rejects local, workspace, and non-GitHub sources', () => {
+    expect(gitInstallSource('link:/workspace/dsh-vision-toolkit')).toBeUndefined()
+    expect(gitInstallSource('file:./plugin')).toBeUndefined()
+    expect(gitInstallSource('./plugin')).toBeUndefined()
+    expect(gitInstallSource('git+ssh://git@github.com/GofMan5/dsh-vision-toolkit.git')).toBeUndefined()
+    expect(gitInstallSource('git+https://gitlab.com/GofMan5/dsh-vision-toolkit.git')).toBeUndefined()
+    expect(gitInstallSource('@gofman5/dsh-vision-toolkit')).toBeUndefined()
+  })
+})
+
+describe('git installation updates', () => {
+  const HEAD_COMMIT = '1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d'
+  const rawManifest = (version: string): Response => new Response(JSON.stringify({
+    name: VISION_TOOLKIT_PACKAGE,
+    version,
+  }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  const headCommits = (sha: string): Response => new Response(JSON.stringify([{ sha }]), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  })
+
+  it('supports git installs, checks GitHub for the head, and installs the pinned commit', async () => {
+    const fixture = await profileFixture('github:GofMan5/dsh-vision-toolkit')
+    const subprocess = new FakeSubprocess(async (spec) => {
+      // The `add` spawn simulates pnpm resolving the pinned commit.
+      if (spec.argv.some(part => String(part).includes('github:GofMan5/dsh-vision-toolkit#'))) {
+        await writeFile(join(fixture.installedDir, 'package.json'), JSON.stringify({
+          name: VISION_TOOLKIT_PACKAGE,
+          version: '0.4.0',
+        }))
+        return { stdout: 'updated\n' }
+      }
+      return { stdout: '' }
+    })
+    const prepareRestart = vi.fn()
+    const terminateCurrent = vi.fn()
+    const schedule = vi.fn((callback: () => void) => { callback() })
+    const service = new VisionToolkitPluginUpdateService(host(subprocess), '0.1.0', {
+      profileDir: fixture.profileDir,
+      packageRoot: fixture.installedDir,
+      argv: ['web'],
+      allowDetachedRestart: true,
+      platform: 'linux',
+      prepareRestart,
+      terminateCurrent,
+      schedule,
+    })
+
+    await expect(service.capability()).resolves.toMatchObject({
+      supported: true,
+      checkSupported: true,
+      profile: 'web',
+      dependencySpec: 'github:GofMan5/dsh-vision-toolkit',
+    })
+
+    const fetchMock = vi.fn(async (url: string | URL | Request) => {
+      const target = String(url)
+      if (target.startsWith('https://api.github.com/repos/GofMan5/dsh-vision-toolkit/commits')) return headCommits(HEAD_COMMIT)
+      if (target.startsWith(`https://raw.githubusercontent.com/GofMan5/dsh-vision-toolkit/${HEAD_COMMIT}/package.json`)) return rawManifest('0.4.0')
+      throw new Error(`unexpected fetch ${target}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const check = await service.check()
+    expect(check).toMatchObject({
+      supported: true,
+      currentVersion: '0.1.0',
+      latestVersion: '0.4.0',
+      latestCommit: HEAD_COMMIT,
+      updateAvailable: true,
+    })
+
+    // The install pins the resolved commit so pnpm never reuses the stale
+    // floating-spec resolution.
+    const install = await service.installAndRestart('0.4.0')
+    expect(install).toMatchObject({ fromVersion: '0.1.0', toVersion: '0.4.0', profile: 'web', restarting: true })
+    const installSpawn = subprocess.spawns.find(spec =>
+      spec.argv.some(part => String(part).includes('github:GofMan5/dsh-vision-toolkit#')))
+    expect(installSpawn).toBeDefined()
+    expect(JSON.stringify(installSpawn?.argv)).toContain(HEAD_COMMIT)
+    expect(JSON.stringify(installSpawn?.argv)).not.toContain('--save-exact')
+    vi.unstubAllGlobals()
+  })
+
+  it('reports already-current when the GitHub head matches the installed version', async () => {
+    const fixture = await profileFixture('github:GofMan5/dsh-vision-toolkit')
+    const subprocess = new FakeSubprocess(async () => ({ stdout: '' }))
+    const service = new VisionToolkitPluginUpdateService(host(subprocess), '0.4.0', {
+      profileDir: fixture.profileDir,
+      packageRoot: fixture.installedDir,
+      argv: ['web'],
+    })
+    const fetchMock = vi.fn(async (url: string | URL | Request) => {
+      const target = String(url)
+      if (target.startsWith('https://api.github.com/repos/GofMan5/dsh-vision-toolkit/commits')) return headCommits(HEAD_COMMIT)
+      return rawManifest('0.4.0')
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const check = await service.check()
+    expect(check.updateAvailable).toBe(false)
+    expect(check.latestVersion).toBe('0.4.0')
+
+    await expect(service.installAndRestart('0.4.0')).rejects.toMatchObject({ code: 'already-current' })
+    vi.unstubAllGlobals()
+  })
+
+  it('turns GitHub check failures into actionable update-check-failed errors', async () => {
+    const fixture = await profileFixture('github:GofMan5/dsh-vision-toolkit')
+    const subprocess = new FakeSubprocess(async () => ({ stdout: '' }))
+    const service = new VisionToolkitPluginUpdateService(host(subprocess), '0.1.0', {
+      profileDir: fixture.profileDir,
+      packageRoot: fixture.installedDir,
+      argv: ['web'],
+    })
+    const fetchMock = vi.fn(async (url: string | URL | Request) => {
+      const target = String(url)
+      if (target.startsWith('https://api.github.com/repos/')) {
+        return new Response('rate limited', { status: 403 })
+      }
+      return rawManifest('0.4.0')
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(service.check()).rejects.toMatchObject({
+      code: 'update-check-failed',
+      message: expect.stringContaining('HTTP 403'),
+    })
+    vi.unstubAllGlobals()
   })
 })
 
