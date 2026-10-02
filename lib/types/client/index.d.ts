@@ -21,7 +21,6 @@ declare const en: {
     readonly externalNotice: "Remote tools send the selected image bytes to the configured external vision API. Local crop, trace, pixel diff, palette, foreground extraction, and HTML rendering do not upload images.";
     readonly provider: "Vision service";
     readonly providerHint: "Choose the API protocol, then provide the service address, model, and API key used by online vision features.";
-    readonly aihubmixTutorial: "Need an AIHubMix key for free Gemini 3.7 Flash vision? Follow the signup guide →";
     readonly baseUrl: "Base URL";
     readonly apiKey: "API key";
     readonly apiKeyPlaceholderMissing: "Paste the API key";

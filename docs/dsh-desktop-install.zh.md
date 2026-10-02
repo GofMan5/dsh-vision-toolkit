@@ -62,6 +62,6 @@ dsh plugin --profile desktop add @anionex/dsh-vision-toolkit@<新版本号>
 
 ## 相关链接
 
-- [项目主页](https://agent-vision.anionex.me)
-- [npm 包](https://www.npmjs.com/package/@anionex/dsh-vision-toolkit)
+- [Fork 仓库](https://github.com/GofMan5/dsh-vision-toolkit)
+- [上游 npm 包](https://www.npmjs.com/package/@anionex/dsh-vision-toolkit)
 - [DSH Desktop 用户指南](https://github.com/anywhere-labs/deepseek-harness-desktop/blob/master/docs/user-guide.md)

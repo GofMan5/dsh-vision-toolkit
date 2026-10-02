@@ -19,6 +19,11 @@ import {
   workspaceStorageId,
 } from '../src/paths.ts'
 import { VisionToolkitError } from '../src/errors.ts'
+import { probeSymlinkSupport } from './symlink-capability.ts'
+
+// Windows grants symlink creation only to elevated tokens or Developer Mode;
+// the symlink-fencing tests below skip on hosts without the privilege.
+const symlinksAvailable = await probeSymlinkSupport()
 
 const tempDirs: string[] = []
 async function tempDir(prefix: string): Promise<string> {
@@ -291,7 +296,7 @@ describe('resolveInputFile', () => {
     await expect(resolveInputFile(join(outside, 'x.png'), policy)).rejects.toMatchObject({ code: 'path' })
   })
 
-  it('rejects a symlink whose real target escapes the fence', async () => {
+  it.skipIf(!symlinksAvailable)('rejects a symlink whose real target escapes the fence', async () => {
     const workspace = await tempDir('workspace')
     const outside = await outsideTempDir('outside')
     await writeFile(join(outside, 'secret.png'), 'data')
@@ -300,7 +305,7 @@ describe('resolveInputFile', () => {
     await expect(resolveInputFile('link.png', policy)).rejects.toMatchObject({ code: 'path' })
   })
 
-  it('allows a symlink whose real target stays inside the fence', async () => {
+  it.skipIf(!symlinksAvailable)('allows a symlink whose real target stays inside the fence', async () => {
     const workspace = await tempDir('workspace')
     await writeFile(join(workspace, 'real.png'), 'data')
     await symlink(join(workspace, 'real.png'), join(workspace, 'link.png'))
@@ -339,7 +344,7 @@ describe('resolveOutputFile', () => {
     expect(await readFile(finalPath, 'utf8')).toBe('<svg/>\n')
   })
 
-  it('replaces a destination symlink itself without writing through it', async () => {
+  it.skipIf(!symlinksAvailable)('replaces a destination symlink itself without writing through it', async () => {
     const workspace = await tempDir('workspace')
     const outside = await outsideTempDir('outside')
     const protectedPath = join(outside, 'protected.svg')
@@ -381,7 +386,7 @@ describe('managed artifact directories', () => {
     expect(await readFile(join(resume, 'result.json'), 'utf8')).toContain('true')
   })
 
-  it('restores the previous run only from a real managed directory', async () => {
+  it.skipIf(!symlinksAvailable)('restores the previous run only from a real managed directory', async () => {
     const workspace = await tempDir('workspace')
     const outside = await outsideTempDir('outside')
     const policy = await createPathPolicy(workspace, [])
@@ -391,7 +396,7 @@ describe('managed artifact directories', () => {
     await expect(seedStagedDirectory(finalPath, staged, policy)).rejects.toMatchObject({ code: 'path' })
   })
 
-  it('rejects symbolic links anywhere inside a staged run directory', async () => {
+  it.skipIf(!symlinksAvailable)('rejects symbolic links anywhere inside a staged run directory', async () => {
     const workspace = await tempDir('workspace')
     const outside = await outsideTempDir('outside')
     const policy = await createPathPolicy(workspace, [])

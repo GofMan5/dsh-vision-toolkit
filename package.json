@@ -1,5 +1,5 @@
 {
-  "name": "@anionex/dsh-vision-toolkit",
+  "name": "@gofman5/dsh-vision-toolkit",
   "version": "0.2.0",
   "description": "DeepSeek Harness-native integration for agent-vision-toolkit: image Q&A, OCR, grounding, UI restoration, pixel diff, Artifacts, and Web UI. Fork: relay model picker plus per-model multimodal capabilities (image/video/audio/document).",
   "keywords": [
@@ -25,7 +25,6 @@
     "url": "https://github.com/GofMan5/dsh-vision-toolkit/issues"
   },
   "homepage": "https://github.com/GofMan5/dsh-vision-toolkit#readme",
-  "funding": "https://ifdian.net/a/anionex",
   "type": "module",
   "packageManager": "pnpm@11.7.0",
   "engines": {
@@ -172,5 +171,6 @@
     "typescript": "^6.0.3",
     "vitest": "^4.1.8"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "author": "GofMan5"
 }

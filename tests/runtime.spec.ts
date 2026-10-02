@@ -25,6 +25,11 @@ import {
 } from '../src/upstream.ts'
 import type { PreparedUpstreamRuntime } from '../src/runtime-install.ts'
 import { UPSTREAM_VERSION } from '../src/version.ts'
+import { probeSymlinkSupport } from './symlink-capability.ts'
+
+// Windows grants symlink creation only to elevated tokens or Developer Mode;
+// the tampered-cache test below skips on hosts without the privilege.
+const symlinksAvailable = await probeSymlinkSupport()
 
 const FIXTURE_UPSTREAM = fileURLToPath(new URL('./fixtures/upstream', import.meta.url))
 const VENDORED_UPSTREAM = fileURLToPath(new URL('../vendor/agent-vision-toolkit', import.meta.url))
@@ -584,7 +589,7 @@ describe('VisionToolkitRuntime', () => {
     expect(cacheEntry?.length).toBeLessThan(120)
   })
 
-  it('ignores and replaces tampered compressed-cache entries', async () => {
+  it.skipIf(!symlinksAvailable)('ignores and replaces tampered compressed-cache entries', async () => {
     const { runtime } = await setup({ maxImageBytes: 1024 })
     const workspace = await tempWorkspace()
     const options = { signal, workspace }

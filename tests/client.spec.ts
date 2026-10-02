@@ -15,7 +15,7 @@ type ToolCallBlock = Parameters<typeof decodeVisionResult>[0]
 
 afterEach(() => {
   cleanup()
-  document.querySelectorAll('style[data-plugin-css="@anionex/dsh-vision-toolkit/client"]').forEach(element => { element.remove() })
+  document.querySelectorAll('style[data-plugin-css="@gofman5/dsh-vision-toolkit/client"]').forEach(element => { element.remove() })
   resetDisplayConfigCache()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
@@ -200,7 +200,7 @@ describe('Vision Toolkit client plugin', () => {
     const { ctx } = fakeClientContext()
     apply(ctx as never)
 
-    const styles = document.querySelector<HTMLStyleElement>('style[data-plugin-css="@anionex/dsh-vision-toolkit/client"]')
+    const styles = document.querySelector<HTMLStyleElement>('style[data-plugin-css="@gofman5/dsh-vision-toolkit/client"]')
     const css = styles?.textContent ?? ''
     expect(css).toContain('.dvt-preview{display:block;width:100%;max-height:360px;object-fit:contain;background:repeating-conic-gradient(var(--dsw-alias-bg-module-platform) 0 25%,var(--dsw-alias-bg-layer-1) 0 50%)')
     expect(css).toContain('.dvt-download{display:inline-flex;align-items:center;height:28px;padding:0 12px;border-radius:999px;background:var(--dsw-alias-button-primary-fill);color:var(--dsw-alias-label-primary-foreground)')
@@ -406,7 +406,7 @@ describe('Vision Toolkit client plugin', () => {
     })
   })
 
-  it('links the AIHubMix tutorial and exposes a copyable manual update command', async () => {
+  it('exposes a copyable manual update command for the fork repository', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ ok: true, value: settingsSnapshot() })))
     const writeText = vi.fn().mockResolvedValue(undefined)
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
@@ -420,36 +420,14 @@ describe('Vision Toolkit client plugin', () => {
       t: (key: string) => key,
     }))
 
-    const aihubmixTutorial = await screen.findByRole('link', { name: 'aihubmixTutorial' })
-    expect(aihubmixTutorial.getAttribute('href')).toBe('https://github.com/Anionex/dsh-vision-toolkit/blob/main/docs/aihubmix-gemini-vision.zh.md')
-    expect(aihubmixTutorial.getAttribute('target')).toBe('_blank')
-    expect(screen.queryByRole('link', { name: 'groqTutorial' })).toBeNull()
+    expect(screen.queryByRole('link', { name: 'aihubmixTutorial' })).toBeNull()
 
-    const command = 'dsh plugin --profile web add @anionex/dsh-vision-toolkit@latest --registry=https://registry.npmjs.org/'
-    const code = screen.getByText(command)
+    const command = 'dsh plugin --profile web add github:GofMan5/dsh-vision-toolkit'
+    const code = await screen.findByText(command)
     expect(code.tagName).toBe('CODE')
     fireEvent.click(screen.getByRole('button', { name: 'copy' }))
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(command))
     await screen.findByRole('button', { name: 'copied' })
-  })
-
-  it('selects the English AIHubMix tutorial for English output', async () => {
-    const snapshot = settingsSnapshot()
-    snapshot.settings.value.language = 'en'
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ ok: true, value: snapshot })))
-
-    const { ctx, registrations } = fakeClientContext()
-    apply(ctx as never)
-    const settings = registrations.find(entry => entry.options.name === 'settings.section')
-    if (settings === undefined) throw new Error('Settings component was not registered')
-    render(createElement(settings.component, {
-      controller: new VisionSettingsController(),
-      t: (key: string) => key,
-    }))
-
-    const aihubmixTutorial = await screen.findByRole('link', { name: 'aihubmixTutorial' })
-    expect(aihubmixTutorial.getAttribute('href')).toBe('https://github.com/Anionex/dsh-vision-toolkit/blob/main/docs/aihubmix-gemini-vision.md')
-    expect(screen.queryByRole('link', { name: 'groqTutorial' })).toBeNull()
   })
 
   it('reports a successful install and asks for a manual restart when self-restart is unavailable', async () => {

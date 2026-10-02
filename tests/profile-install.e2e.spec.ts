@@ -316,7 +316,7 @@ describe.skipIf(!profileE2eAvailable)('dsh-vision-toolkit profile install (keyle
 
       const dump = await runDsh(['--profile', 'headless', '--dump-config'], { DSH_HOME: home })
       expect(dump.stdout).toContain('- id: vision-toolkit')
-      expect(dump.stdout).toContain("name: '@anionex/dsh-vision-toolkit'")
+      expect(dump.stdout).toContain("name: '@gofman5/dsh-vision-toolkit'")
 
       const server = await startProgressiveToolServer(
         'vision_glance',
@@ -658,7 +658,7 @@ describe.skipIf(!profileE2eAvailable)('dsh-vision-toolkit profile install (keyle
         await reenabledServer.close()
       }
 
-      const remove = await runDsh(['plugin', '--profile', 'headless', 'remove', '@anionex/dsh-vision-toolkit'], {
+      const remove = await runDsh(['plugin', '--profile', 'headless', 'remove', '@gofman5/dsh-vision-toolkit'], {
         DSH_HOME: home,
       })
       expect(remove.code, remove.stderr).toBe(0)

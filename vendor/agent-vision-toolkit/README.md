@@ -391,15 +391,9 @@ To reduce costs further, you can use a locally deployed small multimodal side mo
 
 ## Community
 
-- Setup and usage help: [Support guide](SUPPORT.md) and the repository's issue forms
 - Bug reports and feature requests: [Issues](https://github.com/Anionex/agent-vision-toolkit/issues/new/choose)
-- Contributions: [Contributing guide](CONTRIBUTING.md)
-- Security reports: [Security policy](SECURITY.md)
-- Community standards: [Code of Conduct](CODE_OF_CONDUCT.md)
 - User-facing changes: [Changelog](CHANGELOG.md)
 
 ## About
 
-If agent-vision-toolkit saves you time, you are welcome to star it, share it, contribute, or [sponsor the project](FUNDING.md).
-
-I'm [anionex](https://anionex.me/), an AI-native developer who once ranked No. 4 on GitHub's global developer trending list, with more than 16k stars across my projects. If you would like to follow my future work, [follow me on X](https://x.com/anion_ex) or [GitHub](https://github.com/Anionex).
+`agent-vision-toolkit` was created by [Anionex](https://github.com/Anionex). This vendored snapshot carries the fork's multimodal content-part changes; see the fork's `UPSTREAM_MANIFEST.json` for the exact file hashes.

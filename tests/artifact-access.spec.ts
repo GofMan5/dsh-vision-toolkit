@@ -9,6 +9,11 @@ import {
   prepareArtifactAccessKey,
 } from '../src/artifact-access.ts'
 import type { ArtifactDescriptor } from '../src/artifacts.ts'
+import { probeSymlinkSupport } from './symlink-capability.ts'
+
+// Windows grants symlink creation only to elevated tokens or Developer Mode;
+// the symlink-rejection test below skips on hosts without the privilege.
+const symlinksAvailable = await probeSymlinkSupport()
 
 const roots: string[] = []
 const servers: Server[] = []
@@ -163,7 +168,7 @@ describe('ArtifactAccessController', () => {
     expect((await fetch(`${base}${grant.previewUrl}`)).status).toBe(404)
   })
 
-  it('rejects forged tokens and a delivered file replaced by a symlink', async () => {
+  it.skipIf(!symlinksAvailable)('rejects forged tokens and a delivered file replaced by a symlink', async () => {
     const { root, path, descriptor } = await fixture('preview.png', 'inside', {
       mimeType: 'image/png', kind: 'image', previewIntent: 'image',
     })

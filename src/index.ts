@@ -1,5 +1,5 @@
 /**
- * @anionex/dsh-vision-toolkit — DSH Vision Toolkit profile bundle.
+ * @gofman5/dsh-vision-toolkit — DSH Vision Toolkit profile bundle.
  *
  * Plugin lifecycle follows the documented readiness chain: verify the pinned
  * upstream checkout, publish the vision-skills Skill and its one-shot bootstrap,
@@ -7,7 +7,7 @@
  * the bootstrap. Any
  * failure leaves no model capability behind, and disposal unregisters every
  * global and Agent-scoped contribution the plugin mounted.
- * @module @anionex/dsh-vision-toolkit
+ * @module @gofman5/dsh-vision-toolkit
  */
 
 import type { Context } from '@deepseek-ai/cordis'
@@ -33,7 +33,7 @@ import { PLUGIN_VERSION } from './version.ts'
 import { installVisionToolkitWeb, VisionToolkitWebBackend } from './web.ts'
 import { MAX_PASTE_IMAGE_BYTES, PastedImageBackend } from './paste-images.ts'
 
-export const name = '@anionex/dsh-vision-toolkit'
+export const name = '@gofman5/dsh-vision-toolkit'
 
 export { Config } from './config.ts'
 

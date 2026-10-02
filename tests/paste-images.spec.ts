@@ -11,6 +11,11 @@ import {
   safePastedImageName,
   type PasteStorageGeneration,
 } from '../src/paste-images.ts'
+import { probeSymlinkSupport } from './symlink-capability.ts'
+
+// Windows grants symlink creation only to elevated tokens or Developer Mode;
+// the symlink-rejection test below skips on hosts without the privilege.
+const symlinksAvailable = await probeSymlinkSupport()
 
 const roots: string[] = []
 const servers: Server[] = []
@@ -137,7 +142,7 @@ describe('pasted image Web backend', () => {
     expect(safePastedImageName('trailing... ', 'image/png')).toBe('trailing')
   })
 
-  it('rejects a symlinked plugin temp root that resolves outside the workspace', async () => {
+  it.skipIf(!symlinksAvailable)('rejects a symlinked plugin temp root that resolves outside the workspace', async () => {
     const cwd = await workspace()
     const outside = await workspace()
     await symlink(outside, join(cwd, '.dsh-vision-toolkit'))

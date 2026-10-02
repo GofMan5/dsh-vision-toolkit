@@ -18,7 +18,13 @@ This release marks the fork's first feature set on top of upstream 0.1.46: the v
 
 ### Changed
 
+- **The fork now ships as `@gofman5/dsh-vision-toolkit` (author: GofMan5).** The cordis plugin name, client bundle id, profile bundle entry, and patch-row name all follow the package name, so profiles migrating from upstream must update the dependency key, the `dsh.profile.bundles` entry, and any `name: '@anionex/dsh-vision-toolkit'` patch rows to the new id. Upstream remains the original `@anionex/dsh-vision-toolkit`.
 - The health-check *Test vision model* still sends the bundled diagnostic image, and its failure detail now explains modality rejections the same way glance does.
+- The copyable manual-update command in Settings points at `github:GofMan5/dsh-vision-toolkit` instead of the upstream npm release, matching how the fork is installed.
+
+### Removed
+
+- All sponsor, donation, and self-promotion surfaces inherited from upstream: the sponsor tables and affiliate links (AIHubMix, E-API), the donation QR codes, the community-group QR, the FUNDING files, trendshift/dshfind/leaderboard/npm badges, the upstream author's contact links, and the AIHubMix signup tutorial linked from Vision Settings.
 
 ### Compatibility
 
@@ -111,14 +117,9 @@ This release marks the fork's first feature set on top of upstream 0.1.46: the v
 
 ## [0.1.37] - 2026-08-20
 
-### Added
-
-- Added a bilingual, screenshot-based AIHubMix guide covering signup through the Inferera entry, API key creation, free Gemini 3.7 Flash model selection, exact Vision Toolkit settings, and troubleshooting.
-
 ### Changed
 
-- Replaced the Groq tutorial link in Vision Settings with the AIHubMix guide and select the matching English or Chinese page from the configured vision-output language.
-- Updated the English and Chinese READMEs to use the Inferera signup entry and feature the AIHubMix guide.
+- Superseded the Vision Settings tutorial link with provider-agnostic guidance (fork: the sponsored signup guide was removed).
 
 ## [0.1.36] - 2026-08-20
 

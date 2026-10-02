@@ -16,7 +16,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 
-export const VISION_TOOLKIT_PACKAGE = '@anionex/dsh-vision-toolkit'
+export const VISION_TOOLKIT_PACKAGE = '@gofman5/dsh-vision-toolkit'
 
 const CHECK_TIMEOUT_MS = 20_000
 const UPDATE_TIMEOUT_MS = 180_000

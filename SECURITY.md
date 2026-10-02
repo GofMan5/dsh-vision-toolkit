@@ -8,7 +8,7 @@ Security fixes target the latest tagged release and the current `main` branch. O
 
 Do not open a public issue for a suspected vulnerability.
 
-Email `davidyang042@gmail.com` with the subject `dsh-vision-toolkit security report`. If GitHub private vulnerability reporting is enabled for the repository, that channel may be used instead.
+Email `maksimka.ushanov0@gmail.com` with the subject `dsh-vision-toolkit security report`. If GitHub private vulnerability reporting is enabled for the repository, that channel may be used instead.
 
 Include, when relevant:
 

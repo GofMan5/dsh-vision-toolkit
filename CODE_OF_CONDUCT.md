@@ -43,7 +43,7 @@ We agree to restrict the following behaviors in our community. Instances, threat
 
 Tensions can occur between community members even when they are trying their best to collaborate. Not every conflict represents a code of conduct violation, and this Code of Conduct reinforces encouraged behaviors and norms that can help avoid conflicts and minimize harm.
 
-Report a possible violation privately to `davidyang042@gmail.com` with the subject `dsh-vision-toolkit conduct report`. Do not report conduct incidents through a public issue.
+Report a possible violation privately to `maksimka.ushanov0@gmail.com` with the subject `dsh-vision-toolkit conduct report`. Do not report conduct incidents through a public issue.
 
 Community moderators take reports seriously and will make every effort to respond in a timely manner. They may review relevant messages, logs, or other evidence and may contact involved participants. Reports, investigations, and enforcement actions will be handled privately whenever possible, with safety and confidentiality taking priority.
 

@@ -6,30 +6,20 @@
 
 # DSH Vision Toolkit
 
-<a href="https://trendshift.io/repositories/149708?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-149708" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/149708/daily?language=TypeScript" alt="Anionex%2Fdsh-vision-toolkit | Trendshift" width="250" height="55"/></a>
-
-[![由 dshfind 推荐](https://img.shields.io/badge/%E7%94%B1%20dshfind-%E6%8E%A8%E8%8D%90-FFD700?style=flat-square)](https://dshfind.com/zh/plugins/Anionex/dsh-vision-toolkit)
-[![dshfind 评分：94——最高分插件](https://img.shields.io/badge/dshfind%20%E8%AF%84%E5%88%86-94%20%7C%20%E6%9C%80%E9%AB%98%E5%88%86%E6%8F%92%E4%BB%B6-5B4CF0?style=flat-square)](https://dshfind.com/zh/plugins/Anionex/dsh-vision-toolkit)
-[![npm](https://img.shields.io/npm/v/@anionex/dsh-vision-toolkit?style=flat-square&color=5B4CF0)](https://www.npmjs.com/package/@anionex/dsh-vision-toolkit)
-
 [![MIT](https://img.shields.io/badge/license-MIT-0B7285?style=flat-square)](LICENSE)
 [![DSH](https://img.shields.io/badge/DSH-Web%20%2B%20Headless-5B4CF0?style=flat-square)](cordis.patch.yml)
+
+> **fork：** 本仓库是 [GofMan5/dsh-vision-toolkit](https://github.com/GofMan5/dsh-vision-toolkit)，基于 [Anionex/dsh-vision-toolkit](https://github.com/Anionex/dsh-vision-toolkit)（上游 0.1.46）的分支，把视觉模型变成**可从中继选择、可按模型声明能力**的选择——支持直接从 OpenAI 兼容中继拉取模型列表，并声明每个模型接受图片、视频、音频还是文档。
 
 **更强大的视觉工具箱——给 DeepSeek Harness 里的纯文本模型装上眼睛：图片问答、长图 OCR、前端 UI 还原、GUI 视觉任务，一套视觉工具箱和一个 Skill。**
 
 🚀 粘贴图片，直接提问 ｜ 一行命令安装即用 ｜ 场景丰富
 
-[亮点](#亮点) ｜ [快速开始](#快速开始三步完成) ｜ [工具一览](#工具一览) ｜ [配置与限制](#配置与限制) ｜ [常见问题](#常见问题) ｜ [交流群](#开发与社区)
+[亮点](#亮点) ｜ [快速开始](#快速开始三步完成) ｜ [工具一览](#工具一览) ｜ [配置与限制](#配置与限制) ｜ [常见问题](#常见问题) ｜ [开发](#开发)
 
 🌐 [English](README.md) ｜ **中文**
 
 </div>
-
-🏆 本项目为deepseek harness生态首个综合性视觉工具插件：内测前已立项，并在内测期间参考本人的[`agent-vision-toolkit`](https://github.com/Anionex/agent-vision-toolkit)做出。
-
-> **原创声明：** 这套视觉工具的体系和划分方式，以及 `vision-skills` Skill，均由作者个人原创并持续打磨，相关工具、方法和工作流来自长期的真实使用与反复迭代。
-
-> 如果这个项目对你有帮助，或给了你一些灵感，欢迎 Star 🌟 & Fork。
 
 ## 亮点
 
@@ -46,30 +36,10 @@
 2. **DSH 原生接入**：把这些能力放进 Profile、会话、Settings、Artifacts 和 Web 界面。
 
 ```sh
-dsh plugin --profile web add @anionex/dsh-vision-toolkit
+dsh plugin --profile web add github:GofMan5/dsh-vision-toolkit
 ```
 
-**上游工具箱：** [Anionex/agent-vision-toolkit](https://github.com/Anionex/agent-vision-toolkit) · **项目网站：** [agent-vision.anionex.me](https://agent-vision.anionex.me)
-
-## ❤️ 赞助
-
-> 想赞助本项目？详见 [FUNDING.md](FUNDING.md) 或发送邮件到 davidyang042@gmail.com。
-
-<details open>
-<summary>点击折叠</summary>
-
-<table>
-<tr>
-<td width="220" align="center" valign="middle"><a href="https://aihubmix.com/?aff=sinZ"><img src="assets/logo_aihubmix.png" alt="AIHubMix" height="48"></a></td>
-<td valign="middle">感谢 <a href="https://aihubmix.com/?aff=sinZ">AIHubMix</a> 赞助本项目！AIHubMix 是稳定、高并发的 AI 大模型 API 聚合平台，一个 API Key 即可接入 Claude、GPT、Gemini、DeepSeek 等主流模型，兼容多种协议，并提供<b>免费模型选择</b>。注册时，海外用户请使用 <a href="https://aihubmix.com/?aff=sinZ">AIHubMix 入口</a>，中国大陆用户请使用 <a href="https://inferera.com/?aff=sinZ">Inferera 入口</a>。</td>
-</tr>
-<tr>
-<td width="220" align="center" valign="middle"><a href="https://api.ewo.so/register?aff=U6PT7J"><img src="assets/logo_eapi_dark.png" alt="E-API" height="48"></a></td>
-<td valign="middle">感谢 <a href="https://api.ewo.so/register?aff=U6PT7J">E-API</a> 赞助本项目！E-API 聚合主流 AI 模型，兼容 OpenAI、Anthropic 与 Codex 接口；部分 Claude 模型相比官方价<b>最高优惠约 98%</b>，DeepSeek V4 系列<b>优惠约 25%</b>。</td>
-</tr>
-</table>
-
-</details>
+**上游工具箱：** [Anionex/agent-vision-toolkit](https://github.com/Anionex/agent-vision-toolkit)
 
 **目录**
 
@@ -81,12 +51,10 @@ dsh plugin --profile web add @anionex/dsh-vision-toolkit
 - [工具一览](#工具一览)
 - [配置与限制](#配置与限制)
 - [常见问题](#常见问题)
-- [赞赏](#赞赏)
-- [开发与社区](#开发与社区)
+- [开发](#开发)
 
 ## 最近更新
 
-- **2026-08-20 · AIHubMix 申请教程：** 新增通过 Inferera 入口申请 API Key 并配置 Gemini 3.7 Flash 视觉模型的图文教程，并在视觉工具设置中直接提供入口。
 - **2026-08-19 · 透明变体路由默认开启：** 模型选择器默认只显示每个模型一项并保留原模型名，粘贴图片、历史图片和内置 `read_image` 工具都能直接使用，不再需要手动切换到 `(Vision Toolkit)` 变体；如需恢复显式条目，可在 设置 → 高级设置 → 图片输入 关闭“透明变体路由”。
 - **2026-08-16 · Windows Python：** 支持 Microsoft Store Python，解决 Windows 用户首次创建隔离环境失败的问题。
 - **2026-08-17 · 视觉升级：** 默认模型切换到 Gemini 3.7 Flash，并修复 Qwen/Gemini 检测框坐标顺序错位的问题。
@@ -157,20 +125,22 @@ dsh plugin --profile web add @anionex/dsh-vision-toolkit
 
 ### 1. 安装
 
+安装**本 fork**。包名为 `@gofman5/dsh-vision-toolkit`（所有者：[GofMan5](https://github.com/GofMan5)），从上游切换时需要同步更新 Profile 的 bundle 列表和 patch 条目名称：
+
 ```sh
-dsh plugin --profile web add @anionex/dsh-vision-toolkit
+dsh plugin --profile web add github:GofMan5/dsh-vision-toolkit
 ```
 
 Headless Profile 也可以安装：
 
 ```sh
-dsh plugin --profile headless add @anionex/dsh-vision-toolkit
+dsh plugin --profile headless add github:GofMan5/dsh-vision-toolkit
 ```
 
 使用 **DSH Desktop 桌面版**？桌面版自带 `dsh` 命令行，但有意不写入系统 PATH，请不要在系统终端里执行上面的命令。请从托盘打开 **DSH 终端（Open DSH Terminal）**，在桌面版自己的终端中安装到 Desktop Profile：
 
 ```sh
-dsh plugin --profile desktop add @anionex/dsh-vision-toolkit
+dsh plugin --profile desktop add github:GofMan5/dsh-vision-toolkit
 ```
 
 安装完成后重启 DSH Desktop。DSH Desktop 2.0.1 内置插件市场的“一键安装”存在已知问题，修复前请优先使用上面的终端命令安装。
@@ -179,7 +149,7 @@ dsh plugin --profile desktop add @anionex/dsh-vision-toolkit
 
 ### 2. 重启并确认
 
-重启正在运行的 Web Profile，打开 **设置 → 视觉工具**，配置视觉模型，然后运行**测试视觉模型**确认连接。
+重启正在运行的 Web Profile，打开 **设置 → 视觉工具**，配置视觉模型，然后运行**测试视觉模型**确认连接。把 API 地址指向 OpenAI 兼容中继后，可点击**加载模型**直接从中继目录选择视觉模型；模型字段下方的能力复选框会显示它接受的输入类型（如果按名称自动检测的结果不对，可以手动调整），然后保存。
 
 首次启动会自动准备隔离运行环境：插件优先使用系统已有的 Python 3.11+；如果系统没有，会自动从国内镜像（`dsh-vision-python-bootstrap-1317715800.cos.ap-guangzhou.myqcloud.com`）下载一个带完整性校验的托管 Python（约 35MB，仅首次需要网络），镜像不可用时自动回退到 GitHub 官方发布源。锁定依赖（Pillow、NumPy、vtracer）会优先从腾讯云 PyPI 镜像（`mirrors.cloud.tencent.com/pypi/simple`）安装，镜像不可用时回退到官方 PyPI。普通安装不需要下载 `agent-vision-toolkit` 源码，也不需要设置本地路径。
 
@@ -258,8 +228,6 @@ flowchart LR
 
 在 **设置 → 视觉工具** 中配置视觉模型提供方，并把 API Key 保存为 DSH Credential。Settings 只保存 Credential 引用，不会回显密钥。
 
-**AIHubMix 图文教程：** [申请 AIHubMix API Key 并配置 Gemini 3.7 Flash 识图](docs/aihubmix-gemini-vision.zh.md)。教程包含账号与 API Key 获取截图、Vision Toolkit 的准确配置、模型选择和常见问题排查。
-
 也可以在 Profile patch 中配置：
 
 ```yaml
@@ -320,7 +288,7 @@ Profile patch 还可以通过 `provider.headers` 配置非秘密的部署元数�
 | OpenCode Zen 返回 `400 MissingSessionID` | 在 Profile patch 的 `provider.sessionHeaders` 中加入 `x-opencode-session`，然后重启 Profile；不要把 Session id 或 API Key 写进 `provider.headers` |
 | 首次运行时准备失败 | 自动下载托管 Python 需要网络和磁盘权限（默认先走国内镜像，失败时回退 GitHub）；失败时检查网络或包缓存，也可以安装 Python 3.11+ 或在 Settings 中配置 `runtime.python`，然后重新测试 |
 | 找不到 Chrome | 安装 Chrome、Chromium 或 Edge；只有 HTML 截图不可用，其他工具不受影响 |
-| DSH Desktop 提示找不到 `dsh` 命令，或内置插件市场安装失败 | 从托盘打开 **DSH 终端**，运行 `dsh plugin --profile desktop add @anionex/dsh-vision-toolkit`，再重启 DSH Desktop。桌面版 2.0.1 的内置市场存在已知安装问题，当前请优先使用终端安装 |
+| DSH Desktop 提示找不到 `dsh` 命令，或内置插件市场安装失败 | 从托盘打开 **DSH 终端**，运行 `dsh plugin --profile desktop add github:GofMan5/dsh-vision-toolkit`，再重启 DSH Desktop。桌面版 2.0.1 的内置市场存在已知安装问题，当前请优先使用终端安装 |
 | 产物无法预览 | 使用“打开文件”或结果中的工作区路径；预览 URL 只在 Web 路由可用时存在 |
 
 ## FAQ
@@ -329,27 +297,15 @@ Profile patch 还可以通过 `provider.headers` 配置非秘密的部署元数�
 
 每次检查都是一条独立的多模态请求，只携带必要意图和图片，调用之间不会累积上下文。实际费用取决于服务商、图片、模型，以及 Responses 的 `reasoningEffort`；较高强度可能消耗更多推理 token 并增加延迟。留空可使用提供方默认值；若更看重可预测的本地成本，也可以使用本地部署的小型多模态侧模型（例如 Gemma 4 或 Qwen 3.5/3.6 系列）。
 
-## 赞赏
-
-如果本项目对你有价值，欢迎请开发者喝杯咖啡☕️
-
-<img width="240" alt="微信收款码" src="assets/wechat-reward.png" />
-
-## 开发与社区
+## 开发
 
 - 贡献前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。
-- Bug、功能建议和使用问题请提交到 [GitHub Issues](https://github.com/Anionex/dsh-vision-toolkit/issues)；渠道说明见 [SUPPORT.md](SUPPORT.md)。
+- Bug、功能建议和使用问题请提交到 [GitHub Issues](https://github.com/GofMan5/dsh-vision-toolkit/issues)。
 - 安全漏洞请按 [SECURITY.md](SECURITY.md) 私下报告。
-- 版本变化见 [CHANGELOG.md](CHANGELOG.md)，赞助说明见 [FUNDING.md](FUNDING.md)。
+- 版本变化见 [CHANGELOG.md](CHANGELOG.md)。
 - 通用视觉工具、跨 Agent 接入和视觉任务方法论请访问上游 [agent-vision-toolkit](https://github.com/Anionex/agent-vision-toolkit)。
 
-<p align="center">
-  <img src="assets/community-group-qr.png" alt="agent-vision-toolkit 项目交流群二维码" width="240" />
-</p>
-
-我是 [anionex](https://anionex.me/)，一位 AI 原生开发者，曾位列 GitHub 全球开发者趋势榜第 **3** 名，项目累计超过 16k stars。想了解我后续的工作，欢迎在 [GitHub](https://github.com/Anionex) 关注我。
-
-[`agent-vision-toolkit`](https://github.com/Anionex/agent-vision-toolkit) 由 [Anionex](https://anionex.me/) 创建。本仓库维护它面向 DeepSeek Harness 的原生集成。
+[`agent-vision-toolkit`](https://github.com/Anionex/agent-vision-toolkit) 由 [Anionex](https://github.com/Anionex) 创建；本 fork 维护它面向 DeepSeek Harness 的接入。
 
 ## 许可证
 

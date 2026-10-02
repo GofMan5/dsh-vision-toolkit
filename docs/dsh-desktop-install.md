@@ -62,6 +62,6 @@ If you installed without pinning an exact version, the official `dsh plugin upda
 
 ## Links
 
-- [Project website](https://agent-vision.anionex.me)
-- [npm package](https://www.npmjs.com/package/@anionex/dsh-vision-toolkit)
+- [Fork repository](https://github.com/GofMan5/dsh-vision-toolkit)
+- [Upstream npm package](https://www.npmjs.com/package/@anionex/dsh-vision-toolkit)
 - [DSH Desktop user guide](https://github.com/anywhere-labs/deepseek-harness-desktop/blob/master/docs/user-guide.en.md)

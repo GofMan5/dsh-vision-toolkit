@@ -65,7 +65,7 @@ async function profileFixture(spec = '0.1.0') {
   const root = await mkdtemp(join(tmpdir(), 'dvt-plugin-update-'))
   roots.push(root)
   const profileDir = join(root, 'profiles', 'web')
-  const installedDir = join(profileDir, 'node_modules', '@anionex', 'dsh-vision-toolkit')
+  const installedDir = join(profileDir, 'node_modules', '@gofman5', 'dsh-vision-toolkit')
   await mkdir(installedDir, { recursive: true })
   await writeFile(join(profileDir, 'package.json'), JSON.stringify({
     name: 'dsh-profile-web',
@@ -562,7 +562,7 @@ describe('plugin restart helper', () => {
     const backupDir = join(root, '.update-backup')
     const appPath = join(root, 'fake-dsh.cjs')
     const pnpmPath = join(root, 'fake-pnpm.cjs')
-    const installedPackagePath = join(root, 'node_modules', '@anionex', 'dsh-vision-toolkit', 'package.json')
+    const installedPackagePath = join(root, 'node_modules', '@gofman5', 'dsh-vision-toolkit', 'package.json')
     await writeFile(statePath, '0.2.0')
     await mkdir(dirname(installedPackagePath), { recursive: true })
     await writeFile(installedPackagePath, JSON.stringify({ name: VISION_TOOLKIT_PACKAGE, version: '0.2.0' }))
@@ -590,11 +590,11 @@ process.on('SIGTERM', () => { server.close(() => process.exit(0)) })
 `)
     await writeFile(pnpmPath, `#!/usr/bin/env node
 const { writeFileSync } = require('node:fs')
-const target = process.argv.find(value => value.startsWith('@anionex/dsh-vision-toolkit@'))
+const target = process.argv.find(value => value.startsWith('@gofman5/dsh-vision-toolkit@'))
 if (!target) process.exit(1)
 const version = target.slice(target.lastIndexOf('@') + 1)
 writeFileSync(process.env.DVT_RESTART_STATE, version)
-writeFileSync(process.env.DVT_INSTALLED_PACKAGE, JSON.stringify({ name: '@anionex/dsh-vision-toolkit', version }))
+writeFileSync(process.env.DVT_INSTALLED_PACKAGE, JSON.stringify({ name: '@gofman5/dsh-vision-toolkit', version }))
 `)
     await chmod(pnpmPath, 0o755)
 

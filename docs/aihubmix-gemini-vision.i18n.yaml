@@ -1,6 +1,0 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
-#   pnpm run verify-translation-pairing --write dsh-vision-toolkit/docs/aihubmix-gemini-vision.md
-aihubmix-gemini-vision.md: acaab7aec126dd50b99c2950e0e37139d00be8e0
-aihubmix-gemini-vision.zh.md: 769370728d9b734b9947c9223045ac00f045f3a2

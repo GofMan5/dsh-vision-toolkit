@@ -4,6 +4,11 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { describeArtifact } from '../src/artifacts.ts'
 import { createPathPolicy } from '../src/paths.ts'
+import { probeSymlinkSupport } from './symlink-capability.ts'
+
+// Windows grants symlink creation only to elevated tokens or Developer Mode;
+// the symlink-rejection test below skips on hosts without the privilege.
+const symlinksAvailable = await probeSymlinkSupport()
 
 const tempDirs: string[] = []
 
@@ -36,7 +41,7 @@ describe('describeArtifact', () => {
     })
   })
 
-  it('rejects symlink artifacts even when their target is in the managed root', async () => {
+  it.skipIf(!symlinksAvailable)('rejects symlink artifacts even when their target is in the managed root', async () => {
     const workspace = await mkdtemp(join(tmpdir(), 'dsh-vision-artifact-'))
     tempDirs.push(workspace)
     const policy = await createPathPolicy(workspace, [])

@@ -177,7 +177,7 @@ describe('package layout contract', () => {
     expect(config).toContain('reasoningEffort')
     expect(config).toContain('userAgent')
     const client = await readFile(join(ROOT, 'lib', 'client.js'), 'utf8')
-    expect(client).toContain('window.__ModuleLoader__.load({ id: "@anionex/dsh-vision-toolkit"')
+    expect(client).toContain('window.__ModuleLoader__.load({ id: "@gofman5/dsh-vision-toolkit"')
     expect(client).toContain('anthropicThinking')
     expect(client).toContain('reasoningEffort')
     expect(client).toContain('userAgent')

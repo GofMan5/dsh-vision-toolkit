@@ -7,7 +7,7 @@
  * @module dsh-vision-toolkit/plugin-update
  */
 import type { Context } from '@deepseek-ai/cordis';
-export declare const VISION_TOOLKIT_PACKAGE = "@anionex/dsh-vision-toolkit";
+export declare const VISION_TOOLKIT_PACKAGE = "@gofman5/dsh-vision-toolkit";
 export type PluginUpdateUnavailableReason = 'profile-not-found' | 'not-direct-dependency' | 'unsupported-install-source' | 'profile-read-only' | 'pnpm-unavailable' | 'unsupported-platform' | 'restart-unmanaged' | 'restart-address-unavailable';
 export interface PluginUpdateCapability {
     supported: boolean;
