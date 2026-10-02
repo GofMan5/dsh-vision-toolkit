@@ -186,6 +186,43 @@ describe('VisionToolkitRuntime', () => {
     expect(result.images[0]?.bytes).toBeGreaterThan(0)
   })
 
+  it('glance accepts video, audio, and document inputs as media entries', async () => {
+    // Regression: resolveInputFile's image-only extension fence rejected
+    // .mp4/.wav/.pdf before the modality routing ever ran.
+    const { runtime } = await setup({
+      provider: {
+        baseUrl: 'https://vision.example/v1',
+        credential: 'VISION_API_KEY',
+        model: 'qwen3.8-max-0902',
+      },
+    })
+    const workspace = await tempWorkspace()
+    await writeFile(join(workspace, 'clip.mp4'), Buffer.from([1, 1, 1, 1]))
+    await writeFile(join(workspace, 'tone.wav'), Buffer.from([2, 2, 2, 2]))
+    await writeFile(join(workspace, 'doc.pdf'), Buffer.from([3, 3, 3, 3]))
+    const result = await runtime.glance(
+      { images: ['clip.mp4', 'tone.wav', 'doc.pdf'] },
+      { signal, workspace },
+    )
+    expect(result.mode).toBe('describe')
+    expect(result.media).toHaveLength(3)
+    expect(result.media?.map(entry => entry.kind)).toEqual(['video', 'audio', 'document'])
+    expect(result.media?.[0]).toMatchObject({ mediaType: 'video/mp4', bytes: 4, kind: 'video' })
+    expect(result.media?.[1]).toMatchObject({ mediaType: 'audio/wav', bytes: 4, kind: 'audio' })
+    expect(result.media?.[2]).toMatchObject({ mediaType: 'application/pdf', bytes: 4, kind: 'document' })
+    expect(result.images).toHaveLength(0)
+  })
+
+  it('glance rejects media inputs the model does not accept with an actionable error', async () => {
+    // fixture-model has no detected modalities beyond the legacy image-only
+    // fallback, so a video input must fail before any bytes move.
+    const { runtime } = await setup()
+    const workspace = await tempWorkspace()
+    await writeFile(join(workspace, 'clip.mp4'), Buffer.alloc(4, 7))
+    await expect(runtime.glance({ images: ['clip.mp4'] }, { signal, workspace }))
+      .rejects.toMatchObject({ code: 'input' })
+  })
+
   it('pins one resolved credential to the evidence fingerprint and vision call', async () => {
     const ctx = new Context()
     contexts.push(ctx)

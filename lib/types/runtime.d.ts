@@ -396,7 +396,10 @@ export declare class VisionToolkitRuntime {
     /**
      * Validate one non-image media file (video, audio, document) for glance.
      * Unlike images there is nothing to decode or compress: the model receives
-     * the verbatim bytes, bounded by `maxMediaBytes`.
+     * the verbatim bytes, bounded by `maxMediaBytes`. The path fence validates
+     * the file against the modality's own extension set — the image-only
+     * `resolveInputFile` whitelist would reject `.mp4`/`.wav`/`.pdf` before the
+     * kind-specific check below ever ran.
      */
     private validateMediaFile;
     /**

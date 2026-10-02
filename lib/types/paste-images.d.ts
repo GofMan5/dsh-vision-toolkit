@@ -1,4 +1,4 @@
-/** Plugin-managed storage for images pasted into the DSH Web composer. */
+/** Plugin-managed storage for files pasted into the DSH Web composer. */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Context } from '@deepseek-ai/cordis';
 /** Exact route used by the browser paste integration. */
@@ -45,6 +45,14 @@ export interface PasteVerdict {
  * safety cap keeps the two bundles in agreement.
  */
 export declare const MAX_PASTE_IMAGE_BYTES: number;
+/**
+ * Hard per-media-file paste ceiling. Screenshots and short voice notes stay
+ * below it comfortably, while the glance-side `maxMediaBytes` bound still
+ * governs what is actually sent to the vision model.
+ */
+export declare const MAX_PASTE_MEDIA_BYTES: number;
+/** Whether one accepted paste media type is a non-image the host cannot attach natively. */
+export declare function isNonImagePasteMediaType(mediaType: string): boolean;
 /** Convert an untrusted browser label into one portable leaf filename. */
 export declare function safePastedImageName(raw: string, mediaType: string): string;
 /** Reject a resolved path that is not rooted below the expected directory. */
@@ -67,15 +75,18 @@ export interface PasteStorageGeneration {
 /** Runtime limit face kept separate for focused backend tests. */
 export interface PasteImageRuntime {
     maxUploadBytes(): number;
+    /** Per-media-file ceiling; defaults to {@link MAX_PASTE_MEDIA_BYTES}. */
+    maxMediaUploadBytes?(): number;
     storageDirectory?(): string | undefined;
     storageGeneration?(): PasteStorageGeneration;
 }
-/** Same-origin, live-Session-bound image upload endpoint. */
+/** Same-origin, live-Session-bound paste upload endpoint. */
 export declare class PastedImageBackend {
     private readonly ctx;
     private readonly runtime;
     constructor(ctx: Context, runtime: PasteImageRuntime);
     private storageGeneration;
+    private uploadCap;
     handle(req: IncomingMessage, res: ServerResponse): Promise<void>;
 }
 //# sourceMappingURL=paste-images.d.ts.map

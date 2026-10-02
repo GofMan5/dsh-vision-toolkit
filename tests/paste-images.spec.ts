@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   ensurePathInside,
   MAX_PASTE_IMAGE_BYTES,
+  MAX_PASTE_MEDIA_BYTES,
   PASTE_IMAGES_ROUTE,
   PastedImageBackend,
   safePastedImageName,
@@ -159,12 +160,33 @@ describe('pasted image Web backend', () => {
     const cwd = await workspace()
     const { base, upload } = await setup(cwd, 2)
     expect((await upload('notes.txt', 'text/plain', Uint8Array.of(1))).status).toBe(400)
+    expect((await upload('archive.zip', 'application/zip', Uint8Array.of(1))).status).toBe(400)
     expect((await upload('large.png', 'image/png', Uint8Array.of(1, 2, 3))).status).toBe(413)
     expect((await upload('short.png', 'image/png', Uint8Array.of(1), 2)).status).toBe(400)
     const missing = await fetch(`${base}${PASTE_IMAGES_ROUTE}?sessionId=missing&name=x.png&size=1`, {
       method: 'POST', headers: { 'Content-Type': 'image/png', Origin: base }, body: Uint8Array.of(1),
     })
     expect(missing.status).toBe(400)
+  })
+
+  it('accepts pasted video, audio, and documents under the media ceiling', async () => {
+    const cwd = await workspace()
+    const { upload } = await setup(cwd, 2)
+    const responses = await Promise.all([
+      upload('clip.mp4', 'video/mp4', Uint8Array.of(1, 2, 3, 4)),
+      upload('tone.wav', 'audio/wav', Uint8Array.of(5, 6)),
+      upload('report.pdf', 'application/pdf', Uint8Array.of(7)),
+    ])
+    for (const response of responses) expect(response.status).toBe(201)
+    const values = await Promise.all(responses.map(async response => {
+      return (await response.json() as { value: { absolutePath: string; filename: string } }).value
+    }))
+    // The image cap (2 bytes here) must not apply to media kinds.
+    expect(values.every(value => inside(cwd, value.absolutePath))).toBe(true)
+    await expect(readFile(values[0]!.absolutePath)).resolves.toEqual(Buffer.from([1, 2, 3, 4]))
+    // Media still hits its own ceiling.
+    const oversized = await upload('big.mkv', 'video/x-matroska', new Uint8Array(MAX_PASTE_MEDIA_BYTES + 1))
+    expect(oversized.status).toBe(413)
   })
 
   it('accepts images above the configured runtime byte limit for later auto-compression', async () => {

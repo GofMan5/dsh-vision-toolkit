@@ -248,6 +248,25 @@ async function confirmTakeover(bench: ReturnType<typeof fakeClient>): Promise<vo
   vi.unstubAllGlobals()
 }
 
+/** The paste controller behind the registered dock, for confirm interactions. */
+function controllerOf(bench: ReturnType<typeof fakeClient>): PasteImageController {
+  const dock = bench.registrations.find(row => row.options.id === 'vision-toolkit-pasted-images')
+  if (dock === undefined) throw new Error('paste dock was not registered')
+  const injected = (dock.options.inject as ((sessionId: string) => {
+    controller: PasteImageController
+    remove: (row: Occurrence) => void
+  }))('session-1')
+  return injected.controller
+}
+
+/** Dispatch the paste and confirm the attach dialog in one step. */
+function pasteAndConfirm(bench: ReturnType<typeof fakeClient>, textarea: HTMLTextAreaElement, event: ClipboardEvent): void {
+  textarea.dispatchEvent(event)
+  const controller = controllerOf(bench)
+  if (controller.confirmState() === undefined) throw new Error('paste did not open the attach confirmation')
+  controller.confirmAttach(false)
+}
+
 afterEach(() => {
   document.body.replaceChildren()
   vi.unstubAllGlobals()
@@ -372,7 +391,7 @@ describe('clipboard image client', () => {
       file('notes.txt', 'text/plain', [9]),
       file('two.webp', 'image/webp', [2, 3]),
     ])
-    textarea.dispatchEvent(event)
+    pasteAndConfirm(bench, textarea, event)
 
     expect(event.defaultPrevented).toBe(true)
     expect(nativePaste).not.toHaveBeenCalled()
@@ -414,7 +433,7 @@ describe('clipboard image client', () => {
     await confirmTakeover(bench)
     const textarea = composer()
 
-    textarea.dispatchEvent(clipboardEvent('', files))
+    pasteAndConfirm(bench, textarea, clipboardEvent('', files))
 
     const snapshot = bench.input.state.getSnapshot()
     expect(snapshot.draft).toBe(expectedDraft)
@@ -452,7 +471,7 @@ describe('clipboard image client', () => {
     const images = Array.from({ length: 21 }, (_, index) => file(`${index}.png`, 'image/png', [index]))
     const event = clipboardEvent('caption', images)
 
-    textarea.dispatchEvent(event)
+    pasteAndConfirm(bench, textarea, event)
 
     expect(event.defaultPrevented).toBe(true)
     expect(bench.input.state.getSnapshot().draft).toBe('before caption')
@@ -465,7 +484,7 @@ describe('clipboard image client', () => {
     const bench = fakeClient('')
     await confirmTakeover(bench)
     const textarea = composer()
-    textarea.dispatchEvent(clipboardEvent('', [
+    pasteAndConfirm(bench, textarea, clipboardEvent('', [
       file('one.png', 'image/png', [1]),
       file('two.png', 'image/png', [2]),
       file('three.png', 'image/png', [3]),
@@ -512,7 +531,7 @@ describe('clipboard image client', () => {
     const bench = fakeClient('', ['slash'], false, 'display-text')
     await confirmTakeover(bench)
     const textarea = composer()
-    textarea.dispatchEvent(clipboardEvent('', [file('one.png', 'image/png', [1])]))
+    pasteAndConfirm(bench, textarea, clipboardEvent('', [file('one.png', 'image/png', [1])]))
     const dock = bench.registrations.find(row => row.options.id === 'vision-toolkit-pasted-images')
     if (dock === undefined) throw new Error('paste dock was not registered')
     const injected = (dock.options.inject as ((sessionId: string) => {
@@ -540,7 +559,7 @@ describe('clipboard image client', () => {
     const bench = fakeClient('')
     await confirmTakeover(bench)
     const textarea = composer()
-    textarea.dispatchEvent(clipboardEvent('', [file('one.png', 'image/png', [1])]))
+    pasteAndConfirm(bench, textarea, clipboardEvent('', [file('one.png', 'image/png', [1])]))
     const dock = bench.registrations.find(row => row.options.id === 'vision-toolkit-pasted-images')
     if (dock === undefined) throw new Error('paste dock was not registered')
     const injected = (dock.options.inject as ((sessionId: string) => {
@@ -584,7 +603,7 @@ describe('clipboard image client', () => {
       }), { status: 200, headers: { 'Content-Type': 'application/json' } })
     })
     vi.stubGlobal('fetch', request)
-    textarea.dispatchEvent(clipboardEvent('', [
+    pasteAndConfirm(bench, textarea, clipboardEvent('', [
       file('one.png', 'image/png', [1]),
       file('two.png', 'image/png', [2]),
     ]))
@@ -618,7 +637,7 @@ describe('clipboard image client', () => {
       ok: false,
       error: { message: 'workspace copy failed' },
     }), { status: 409, headers: { 'Content-Type': 'application/json' } })))
-    textarea.dispatchEvent(clipboardEvent('', [file('broken.png', 'image/png', [1])]))
+    pasteAndConfirm(bench, textarea, clipboardEvent('', [file('broken.png', 'image/png', [1])]))
     const occurrence = bench.input.state.getSnapshot().occurrences[0]
     if (occurrence === undefined) throw new Error('paste occurrence was not inserted')
     const codec = bench.source()?.codec
@@ -710,7 +729,7 @@ describe('clipboard image client', () => {
     await new Promise(resolve => setTimeout(resolve, 0))
     const nativeAfter = vi.fn()
     textarea.addEventListener('paste', nativeAfter)
-    textarea.dispatchEvent(clipboardEvent('', [file('two.png', 'image/png', [2])]))
+    pasteAndConfirm(bench, textarea, clipboardEvent('', [file('two.png', 'image/png', [2])]))
     expect(nativeAfter).not.toHaveBeenCalled()
     expect(bench.input.state.getSnapshot().occurrences).toHaveLength(1)
     bench.dispose()
@@ -732,7 +751,7 @@ describe('clipboard image client', () => {
     const textarea = composer()
     const nativePaste = vi.fn()
     textarea.addEventListener('paste', nativePaste)
-    textarea.dispatchEvent(clipboardEvent('', [file('one.png', 'image/png', [1])]))
+    pasteAndConfirm(bench, textarea, clipboardEvent('', [file('one.png', 'image/png', [1])]))
     expect(nativePaste).not.toHaveBeenCalled()
     // Switching to the image-input variant: the host vetoes the takeover and
     // the paste goes native — no reference, no prevented default.
@@ -757,10 +776,11 @@ describe('clipboard image client', () => {
     bench.dispose()
   })
 
-  it('auto-switches to the variant, replays the paste into the native intake, and skips the path flow', async () => {
+  it('asks before attaching on a text-only model, keeps the model, and attaches after confirmation', async () => {
     const bench = fakeClient('')
-    // The live model catalog reports the exact selection, and the model
-    // directory is the switch channel the selector uses.
+    // The live model catalog reports the exact selection; a variant route
+    // exists, but the fork must keep the model and attach files for the
+    // plugin instead of switching routes.
     const select = vi.fn(async () => {})
     bench.ctx.connection = {
       api: {
@@ -778,64 +798,51 @@ describe('clipboard image client', () => {
       label: 'DeepSeek V4 Flash (Vision Toolkit)',
     }))
     vi.stubGlobal('fetch', policy)
-    // A clipboard payload the synthetic replay can carry (jsdom constructs
-    // neither DataTransfer nor ClipboardEvent init data).
-    class FakeDataTransfer {
-      private stored: File[] = []
-      items = { add: (file: File) => { this.stored.push(file) } }
-      setData(): void {}
-      get files(): File[] { return this.stored }
-    }
-    class FakeClipboardEvent extends Event {
-      readonly clipboardData: { files: File[]; items: Array<{ kind: string; getAsFile: () => File }> } | null
-      constructor(type: string, init: { clipboardData?: { files: File[] } } = {}) {
-        super(type, init)
-        const files = init.clipboardData?.files ?? []
-        this.clipboardData = {
-          files,
-          items: files.map(file => ({ kind: 'file', getAsFile: () => file })),
-        }
-      }
-    }
-    vi.stubGlobal('DataTransfer', FakeDataTransfer)
-    vi.stubGlobal('ClipboardEvent', FakeClipboardEvent as unknown as typeof ClipboardEvent)
     document.dispatchEvent(new Event('focusin'))
     await vi.waitFor(() => { expect(policy).toHaveBeenCalledTimes(1) })
     await new Promise(resolve => setTimeout(resolve, 0))
 
     const textarea = composer()
-    // Mimic the composer's own intake: files on a paste become draft attachments.
-    textarea.addEventListener('paste', (event) => {
-      const files = Array.from((event as ClipboardEvent).clipboardData?.files ?? [])
-      if (files.length > 0) bench.input.addAttachments(files)
-    })
     const nativePaste = vi.fn()
     textarea.addEventListener('paste', nativePaste)
-    textarea.dispatchEvent(clipboardEvent('caption', [
+    const event = clipboardEvent('caption', [
       file('one.png', 'image/png', [1]),
       file('two.webp', 'image/webp', [2, 3]),
-    ]))
+    ])
+    textarea.dispatchEvent(event)
 
-    await vi.waitFor(() => {
-      expect(select).toHaveBeenCalledWith({
-        provider: 'vision-toolkit-deepseek-official',
-        model: 'deepseek-v4-flash',
-      })
-    })
-    await vi.waitFor(() => {
-      expect(bench.input.notify).toHaveBeenCalledWith('info', expect.stringContaining('Switched to'))
-    })
-    await vi.waitFor(() => {
-      expect(bench.input.state.getSnapshot().attachmentIds).toHaveLength(2)
-    })
+    // The paste was captured and parked behind the confirmation dialog: no
+    // model switch, no references yet, no native admission.
+    expect(event.defaultPrevented).toBe(true)
+    expect(nativePaste).not.toHaveBeenCalled()
+    expect(select).not.toHaveBeenCalled()
     expect(bench.input.state.getSnapshot().occurrences).toEqual([])
-    expect(nativePaste).toHaveBeenCalledTimes(1)
+
+    const dock = bench.registrations.find(row => row.options.id === 'vision-toolkit-pasted-images')
+    if (dock === undefined) throw new Error('paste dock was not registered')
+    const injected = (dock.options.inject as ((sessionId: string) => {
+      controller: PasteImageController
+      remove: (row: Occurrence) => void
+    }))('session-1')
+    render(createElement(dock.component, { input: bench.input.state.getSnapshot(), ...injected }))
+
+    expect(screen.getByRole('alertdialog', { name: 'Подтверждение вставки' })).toBeTruthy()
+    expect(screen.getByText(/Прикрепить image \(2\) для использования плагином Vision Toolkit/u)).toBeTruthy()
+    expect(screen.getByLabelText('Больше не показывать в этой сессии')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Прикрепить' }))
+
+    const snapshot = bench.input.state.getSnapshot()
+    expect(snapshot.draft).toContain('caption')
+    expect(snapshot.occurrences).toHaveLength(2)
+    expect(bench.input.state.getSnapshot().attachmentIds).toEqual([])
+    expect(select).not.toHaveBeenCalled()
+    expect(bench.input.notify).not.toHaveBeenCalledWith('info', expect.anything())
     bench.dispose()
   })
 
-  it('carries the reasoning effort through the policy query and the switch', async () => {
+  it('carries the reasoning effort through the policy query', async () => {
     const bench = fakeClient('')
-    const select = vi.fn(async () => {})
     bench.ctx.connection = {
       api: {
         sessions: {
@@ -848,133 +855,100 @@ describe('clipboard image client', () => {
         },
       },
     }
-    bench.ctx.modelDirectories = { directoryFor: vi.fn(() => ({ select })) }
     const policy = vi.fn(async (url: string) => {
       const query = new URL(String(url), 'http://localhost').searchParams
       expect(query.get('provider')).toBe('deepseek-official')
       expect(query.get('modelId')).toBe('deepseek-v4-flash')
       expect(query.get('reasoningEffort')).toBe('high')
-      return policyResponse(false, {
-        provider: 'vision-toolkit-deepseek-official',
-        model: 'deepseek-v4-flash',
-        label: 'DeepSeek V4 Flash (Vision Toolkit)',
-        reasoningEffort: 'high',
-      })
+      return policyResponse(true)
     })
     vi.stubGlobal('fetch', policy)
     document.dispatchEvent(new Event('focusin'))
     await vi.waitFor(() => { expect(policy).toHaveBeenCalledTimes(1) })
-    await new Promise(resolve => setTimeout(resolve, 0))
-    const textarea = composer()
-    textarea.addEventListener('paste', (event) => {
-      const files = Array.from((event as ClipboardEvent).clipboardData?.files ?? [])
-      if (files.length > 0) bench.input.addAttachments(files)
-    })
-    textarea.dispatchEvent(clipboardEvent('', [file('one.png', 'image/png', [1])]))
-
-    await vi.waitFor(() => {
-      expect(select).toHaveBeenCalledWith({
-        provider: 'vision-toolkit-deepseek-official',
-        model: 'deepseek-v4-flash',
-        reasoningEffort: 'high',
-      })
-    })
     bench.dispose()
   })
 
-  it('reads the 0.1.5 attachmentIds count and falls back to the takeover when the replay admits nothing', async () => {
+  it('remembers the session confirmation and attaches later pastes without asking', async () => {
     const bench = fakeClient('')
-    bench.ctx.modelDirectories = { directoryFor: vi.fn(() => ({ select: vi.fn(async () => {}) })) }
-    const policy = vi.fn(async () => policyResponse(false, {
-      provider: 'vision-toolkit-deepseek-official',
-      model: 'deepseek-v4-flash',
-    }))
-    vi.stubGlobal('fetch', policy)
-    // jsdom constructs neither DataTransfer nor ClipboardEvent init data, so
-    // both are faked exactly as the replay path needs them.
-    class FakeDataTransfer {
-      private stored: File[] = []
-      items = { add: (file: File) => { this.stored.push(file) } }
-      setData(): void {}
-      get files(): File[] { return this.stored }
-    }
-    class FakeClipboardEvent extends Event {
-      readonly clipboardData: { files: File[]; items: Array<{ kind: string; getAsFile: () => File }> }
-      constructor(type: string, init: { clipboardData?: { files: File[] } } = {}) {
-        super(type, init)
-        const files = init.clipboardData?.files ?? []
-        this.clipboardData = {
-          files,
-          items: files.map(file => ({ kind: 'file', getAsFile: () => file })),
-        }
-      }
-    }
-    vi.stubGlobal('DataTransfer', FakeDataTransfer)
-    vi.stubGlobal('ClipboardEvent', FakeClipboardEvent as unknown as typeof ClipboardEvent)
-    document.dispatchEvent(new Event('focusin'))
-    await vi.waitFor(() => { expect(policy).toHaveBeenCalledTimes(1) })
-    await new Promise(resolve => setTimeout(resolve, 0))
-
+    await confirmTakeover(bench)
     const textarea = composer()
-    // The replay succeeds, but the composer's native intake admits nothing:
-    // the before/after attachment count is unchanged, so the controller must
-    // fall through to the path takeover rather than assume the images landed.
-    textarea.dispatchEvent(clipboardEvent('', [file('one.png', 'image/png', [1])]))
+    const first = clipboardEvent('', [file('one.png', 'image/png', [1])])
+    textarea.dispatchEvent(first)
+    const controller = controllerOf(bench)
+    if (controller.confirmState() === undefined) throw new Error('first paste did not open the dialog')
+    controller.confirmAttach(true)
+    expect(bench.input.state.getSnapshot().occurrences).toHaveLength(1)
 
-    await vi.waitFor(() => {
-      expect(bench.input.state.getSnapshot().occurrences).toHaveLength(1)
-    })
-    expect(bench.input.state.getSnapshot().attachmentIds).toEqual([])
+    // The remembered confirmation attaches the next paste immediately.
+    const second = clipboardEvent('', [file('two.png', 'image/png', [2])])
+    textarea.dispatchEvent(second)
+    expect(second.defaultPrevented).toBe(true)
+    expect(controller.confirmState()).toBeUndefined()
+    expect(bench.input.state.getSnapshot().occurrences).toHaveLength(2)
     bench.dispose()
   })
 
-  it('degrades to the path takeover when the model switch fails', async () => {
+  it('drops the pending paste when the user cancels the confirmation', async () => {
     const bench = fakeClient('')
-    const select = vi.fn(async () => { throw new Error('switch rejected') })
-    bench.ctx.modelDirectories = { directoryFor: vi.fn(() => ({ select })) }
-    const policy = vi.fn(async () => policyResponse(false, {
-      provider: 'vision-toolkit-deepseek-official',
-      model: 'deepseek-v4-flash',
-      label: 'DeepSeek V4 Flash (Vision Toolkit)',
-    }))
-    vi.stubGlobal('fetch', policy)
-    document.dispatchEvent(new Event('focusin'))
-    await vi.waitFor(() => { expect(policy).toHaveBeenCalledTimes(1) })
-    await new Promise(resolve => setTimeout(resolve, 0))
+    await confirmTakeover(bench)
     const textarea = composer()
     textarea.dispatchEvent(clipboardEvent('', [file('one.png', 'image/png', [1])]))
+    const controller = controllerOf(bench)
+    if (controller.confirmState() === undefined) throw new Error('paste did not open the dialog')
 
-    await vi.waitFor(() => {
-      expect(bench.input.state.getSnapshot().occurrences).toHaveLength(1)
-    })
-    expect(bench.input.state.getSnapshot().attachmentIds).toEqual([])
-    expect(bench.input.notify).toHaveBeenCalledWith('error', expect.stringContaining('switch rejected'))
-    expect(bench.input.notify).not.toHaveBeenCalledWith('info', expect.anything())
+    controller.cancelConfirm()
+
+    expect(controller.confirmState()).toBeUndefined()
+    expect(bench.input.state.getSnapshot().draft).toBe('')
+    expect(bench.input.state.getSnapshot().occurrences).toEqual([])
     bench.dispose()
   })
 
-  it('degrades to the path takeover when clipboard replay is unavailable', async () => {
+  it('attaches pasted video and documents on an image-capable model', async () => {
     const bench = fakeClient('')
-    const select = vi.fn(async () => {})
-    bench.ctx.modelDirectories = { directoryFor: vi.fn(() => ({ select })) }
-    const policy = vi.fn(async () => policyResponse(false, {
-      provider: 'vision-toolkit-deepseek-official',
-      model: 'deepseek-v4-flash',
-      label: 'DeepSeek V4 Flash (Vision Toolkit)',
-    }))
+    // The model accepts images natively, but the host composer cannot attach
+    // video or documents at all: the paste still routes through the plugin.
+    const policy = vi.fn(async () => policyResponse(false))
     vi.stubGlobal('fetch', policy)
-    vi.stubGlobal('DataTransfer', class { constructor() { throw new Error('no clipboard construction') } })
     document.dispatchEvent(new Event('focusin'))
     await vi.waitFor(() => { expect(policy).toHaveBeenCalledTimes(1) })
     await new Promise(resolve => setTimeout(resolve, 0))
     const textarea = composer()
-    textarea.dispatchEvent(clipboardEvent('', [file('one.png', 'image/png', [1])]))
-
-    await vi.waitFor(() => {
-      expect(bench.input.state.getSnapshot().occurrences).toHaveLength(1)
+    const uploads: Array<[string, RequestInit]> = []
+    const request = vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url).startsWith('/_dsh/vision-toolkit/paste-policy')) return policyResponse(false)
+      uploads.push([url, init ?? ({} as RequestInit)])
+      return new Response(JSON.stringify({
+        ok: true,
+        value: { absolutePath: `/workspace/.dsh-vision-toolkit/tmp/pasted-images/a/clip-${uploads.length}` },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } })
     })
-    expect(select).toHaveBeenCalledTimes(1)
-    expect(bench.input.notify).toHaveBeenCalledWith('info', expect.anything())
+    vi.unstubAllGlobals()
+    vi.stubGlobal('fetch', request)
+
+    textarea.dispatchEvent(clipboardEvent('смотри видео', [
+      file('clip.mp4', 'video/mp4', [1, 2, 3]),
+      file('report.pdf', 'application/pdf', [4]),
+    ]))
+    const controller = controllerOf(bench)
+    if (controller.confirmState() === undefined) throw new Error('media paste did not open the dialog')
+    controller.confirmAttach(false)
+
+    const snapshot = bench.input.state.getSnapshot()
+    expect(snapshot.draft).toContain('смотри видео')
+    expect(snapshot.occurrences).toHaveLength(2)
+    const codec = bench.source()?.codec
+    if (codec === undefined) throw new Error('paste source was not registered')
+    const refs = snapshot.occurrences.map(row => row.ref)
+    const serialized = await Promise.all(refs.map(ref => codec.serialize(ref, new AbortController().signal)))
+    expect(serialized).toEqual([
+      '[Pasted video available at absolute path: "/workspace/.dsh-vision-toolkit/tmp/pasted-images/a/clip-1"]',
+      '[Pasted document available at absolute path: "/workspace/.dsh-vision-toolkit/tmp/pasted-images/a/clip-2"]',
+    ])
+    expect(uploads.map(([url]) => new URL(String(url), 'http://localhost').searchParams.get('name')))
+      .toEqual(['clip.mp4', 'report.pdf'])
+    expect(uploads[0]?.[1].headers).toMatchObject({ 'Content-Type': 'video/mp4' })
+    expect(uploads[1]?.[1].headers).toMatchObject({ 'Content-Type': 'application/pdf' })
     bench.dispose()
   })
 })

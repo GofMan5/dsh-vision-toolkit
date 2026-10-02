@@ -1,40 +1,67 @@
-/** Clipboard-only multi-image input for DSH Web. */
+/** Clipboard-only file input for DSH Web: images, video, audio, and documents. */
 
-import { useSyncExternalStore, type ReactNode } from 'react'
+import { useState, useSyncExternalStore, type ReactNode } from 'react'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
-import type { DraftAttachmentId } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type { InputTriggerSource } from '@deepseek-ai/dsh-client-ui-input-trigger/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import { readDisplayConfig } from './display-config.ts'
 
 const SOURCE = 'vision-toolkit-pasted-image'
 export const PASTE_IMAGES_ROUTE = '/_dsh/vision-toolkit/paste-images'
 export const PASTE_POLICY_ROUTE = '/_dsh/vision-toolkit/paste-policy'
 const MAX_IMAGES = 20
+const MAX_MEDIA_FILES = 8
 /** Hard per-image paste ceiling; must match MAX_PASTE_IMAGE_BYTES on the server. */
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024
-const MAX_BATCH_BYTES = 80 * 1024 * 1024
+/** Hard per-media-file paste ceiling; must match MAX_PASTE_MEDIA_BYTES on the server. */
+const MAX_MEDIA_BYTES = 100 * 1024 * 1024
+const MAX_BATCH_BYTES = 240 * 1024 * 1024
 /** A confirmed paste verdict older than this is unknown again, even while a refresh is in flight. */
 const VERDICT_MAX_AGE_MS = 15000
 
-/**
- * Count the draft attachment ids in an InputState snapshot across DSH
- * generations. DSH 0.1.5 renamed the field to `attachmentIds` and widened its
- * meaning from image-only ids to every draft attachment id; the older
- * `imageIds` name survives only as a compatibility fallback for hosts that
- * still publish it, and never crashes when it is absent.
- * @param snapshot - the `input.state.getSnapshot()` value (either generation).
- * @returns the draft attachment count, 0 when neither field is published.
- */
-function draftAttachmentCount(snapshot: unknown): number {
-  if (snapshot === null || typeof snapshot !== 'object') return 0
-  const row = snapshot as {
-    attachmentIds?: readonly DraftAttachmentId[]
-    imageIds?: readonly string[]
-  }
-  if (Array.isArray(row.attachmentIds)) return row.attachmentIds.length
-  return Array.isArray(row.imageIds) ? row.imageIds.length : 0
+/** Media-type prefixes and document types the plugin can paste for the model. */
+const PASTEABLE_TYPE_PREFIXES = ['image/', 'video/', 'audio/'] as const
+const PASTEABLE_DOCUMENT_TYPES = new Set([
+  'application/pdf',
+  'application/msword',
+  'application/vnd.ms-excel',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+])
+
+/** Fallback extension sniffing for clipboard entries without a media type. */
+const PASTEABLE_EXTENSIONS = new Set([
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.tiff', '.avif', '.heic', '.heif', '.svg',
+  '.mp4', '.m4v', '.webm', '.mkv', '.mov', '.avi', '.3gp',
+  '.mp3', '.wav', '.m4a', '.aac', '.ogg', '.opus', '.flac',
+  '.pdf', '.docx', '.xlsx', '.pptx', '.doc', '.xls', '.ppt',
+])
+
+function isPasteableFile(file: File): boolean {
+  const type = file.type.toLowerCase()
+  if (PASTEABLE_TYPE_PREFIXES.some(prefix => type.startsWith(prefix))) return true
+  if (PASTEABLE_DOCUMENT_TYPES.has(type)) return true
+  const name = file.name.toLowerCase()
+  const dot = name.lastIndexOf('.')
+  return dot >= 0 && PASTEABLE_EXTENSIONS.has(name.slice(dot))
+}
+
+function isImageFile(file: File): boolean {
+  return file.type.toLowerCase().startsWith('image/')
+    || (file.type === '' && /\.(?:png|jpe?g|gif|webp|bmp|tiff|avif|heic|heif|svg)$/iu.test(file.name.toLowerCase()))
+}
+
+/** One pending paste awaiting the user's attach confirmation. */
+interface PasteConfirmState {
+  sessionId: string
+  files: File[]
+  text: string
+  /** The composer textarea the paste landed on, for cursor restoration. */
+  target: HTMLTextAreaElement
+  /** Labels for the confirm card: what kinds are in the batch. */
+  kinds: string[]
 }
 
 /**
@@ -165,7 +192,7 @@ function imageFiles(data: DataTransfer | null): File[] {
     .map(item => item.getAsFile())
     .filter((file): file is File => file !== null)
   const candidates = itemFiles.length > 0 ? itemFiles : Array.from(data.files)
-  return candidates.filter(file => file.type.toLowerCase().startsWith('image/'))
+  return candidates.filter(isPasteableFile)
 }
 
 /**
@@ -189,15 +216,27 @@ function verdictKey(sessionId: string, modelLabel: string): string {
 }
 
 function validateImages(files: readonly File[]): void {
-  if (files.length > MAX_IMAGES) throw new Error(`Paste at most ${MAX_IMAGES} images at a time`)
+  const images = files.filter(isImageFile)
+  const media = files.filter(file => !isImageFile(file))
+  if (images.length > MAX_IMAGES) throw new Error(`Paste at most ${MAX_IMAGES} images at a time`)
+  if (media.length > MAX_MEDIA_FILES) throw new Error(`Paste at most ${MAX_MEDIA_FILES} media or document files at a time`)
   let total = 0
   for (const file of files) {
-    if (!file.type.toLowerCase().startsWith('image/')) throw new Error(`${file.name || 'clipboard item'} is not an image`)
-    if (file.size <= 0) throw new Error(`${file.name || 'clipboard image'} is empty`)
-    if (file.size > MAX_IMAGE_BYTES) throw new Error(`${file.name || 'clipboard image'} exceeds ${humanBytes(MAX_IMAGE_BYTES)}`)
+    const cap = isImageFile(file) ? MAX_IMAGE_BYTES : MAX_MEDIA_BYTES
+    if (file.size <= 0) throw new Error(`${file.name || 'clipboard item'} is empty`)
+    if (file.size > cap) throw new Error(`${file.name || 'clipboard file'} exceeds ${(cap / (1024 * 1024)).toFixed(0)} MB`)
     total += file.size
   }
-  if (total > MAX_BATCH_BYTES) throw new Error(`Pasted images exceed ${humanBytes(MAX_BATCH_BYTES)} in total`)
+  if (total > MAX_BATCH_BYTES) throw new Error(`Pasted files exceed ${humanBytes(MAX_BATCH_BYTES)} in total`)
+}
+
+/** Human label for one pasted file kind, used in reference text and confirm UI. */
+function fileKindLabel(file: File): string {
+  const type = file.type.toLowerCase()
+  if (type.startsWith('image/')) return 'image'
+  if (type.startsWith('video/')) return 'video'
+  if (type.startsWith('audio/')) return 'audio'
+  return 'document'
 }
 
 async function responseJson(response: Response): Promise<PasteResponse> {
@@ -207,7 +246,7 @@ async function responseJson(response: Response): Promise<PasteResponse> {
 }
 
 function pasteLabel(file: File, index: number): string {
-  return file.name.trim() || `clipboard-image-${index + 1}`
+  return file.name.trim() || `clipboard-${fileKindLabel(file)}-${index + 1}`
 }
 
 function occurrenceEnd(occurrence: PasteOccurrence): number {
@@ -227,6 +266,10 @@ export class PasteImageController {
   }>()
   /** Guards the synthetic replay paste from re-entering capture interception. */
   private replaying = false
+  /** A paste awaiting the user's attach confirmation, rendered in the dock. */
+  private pendingConfirm: PasteConfirmState | undefined
+  /** Session-scoped “don't ask again”: later pastes attach immediately. */
+  private sessionAttachConfirmed = false
 
   constructor(private readonly ctx: ClientContext) {}
 
@@ -250,7 +293,11 @@ export class PasteImageController {
       candidates: () => Promise.resolve([]),
       onPick: () => undefined,
       codec: {
-        clipboardText: ref => `[pasted image: ${this.records.get(ref)?.file.name ?? ref}]`,
+        clipboardText: ref => {
+          const record = this.records.get(ref)
+          const kind = record === undefined ? 'file' : fileKindLabel(record.file)
+          return `[pasted ${kind}: ${record?.file.name ?? ref}]`
+        },
         serialize: (ref, signal) => this.serialize(ref, signal),
       },
     }
@@ -298,12 +345,12 @@ export class PasteImageController {
           source: SOURCE,
           ref,
           label,
-          clipboardText: `[pasted image: ${label}]`,
+          clipboardText: `[pasted ${fileKindLabel(file)}: ${label}]`,
         }, { start: cursor, end: cursor, draftRev: snapshot.draftRev })
-        if (!accepted) throw new Error('The composer changed before pasted images could be inserted')
+        if (!accepted) throw new Error('The composer changed before pasted files could be inserted')
         const inserted = input.state.getSnapshot().occurrences.find(occurrence =>
           occurrence.source === SOURCE && occurrence.ref === ref)
-        if (inserted === undefined) throw new Error('The pasted image reference was not present after insertion')
+        if (inserted === undefined) throw new Error('The pasted file reference was not present after insertion')
         cursor = occurrenceEnd(inserted)
         const hasNext = index + 1 < files.length
         const suffix = input.state.getSnapshot().draft.slice(cursor)
@@ -449,126 +496,13 @@ export class PasteImageController {
   }
 
   /**
-   * Switch one Session to the route the host validated, through the same
-   * model-directory seat the selector uses when present (so the shared UI
-   * state moves with the session), falling back to the raw RPC.
-   * @param sessionId - the live Session id.
-   * @param route - the validated variant route.
-   */
-  private async switchModel(sessionId: string, route: PasteSwitchRoute): Promise<void> {
-    const directories = this.ctx.get('modelDirectories') as {
-      directoryFor(id: string): { select(selection: { provider: string; model: string; reasoningEffort?: string }): Promise<void> }
-    } | undefined
-    if (directories !== undefined) {
-      // The label is a display hint; the seat only needs the exact route.
-      await directories.directoryFor(sessionId).select({
-        provider: route.provider,
-        model: route.model,
-        ...(route.reasoningEffort === undefined ? {} : { reasoningEffort: route.reasoningEffort }),
-      })
-      return
-    }
-    const connection = this.ctx.get('connection') as { api: { sessions: {
-      selectModel(request: {
-        sessionId: string
-        provider: string
-        model: string
-        reasoningEffort?: string
-      }): Promise<{ result: { ok: boolean; error?: { code: string; message: string } } }>
-    } } } | undefined
-    if (connection === undefined) throw new Error('No model switch channel is available in this Web application')
-    const { result } = await connection.api.sessions.selectModel({
-      sessionId,
-      provider: route.provider,
-      model: route.model,
-      ...(route.reasoningEffort === undefined ? {} : { reasoningEffort: route.reasoningEffort }),
-    })
-    if (!result.ok) throw new Error(`${result.error?.code ?? 'select-model-failed'}: ${result.error?.message ?? 'unknown error'}`)
-  }
-
-  /**
-   * Replay a swallowed paste as a synthetic clipboard event so the composer's
-   * own intake (limits, thumbnails, keyboard) runs with the captured files.
-   * @returns false when the environment cannot construct a clipboard payload.
-   */
-  private replayPaste(target: HTMLTextAreaElement, files: readonly File[], text: string): boolean {
-    let data: DataTransfer
-    try {
-      data = new DataTransfer()
-      for (const file of files) data.items.add(file)
-      if (text !== '') data.setData('text/plain', text)
-    } catch {
-      return false
-    }
-    let event: ClipboardEvent
-    try {
-      event = new ClipboardEvent('paste', {
-        clipboardData: data,
-        bubbles: true,
-        cancelable: true,
-      } as ClipboardEventInit)
-    } catch {
-      return false
-    }
-    if (event.clipboardData === null || event.clipboardData.files.length === 0) return false
-    this.replaying = true
-    try {
-      target.dispatchEvent(event)
-    } finally {
-      this.replaying = false
-    }
-    return true
-  }
-
-  /**
-   * Auto-switch flow: switch the Session to the image-input variant, announce
-   * it, then replay the paste into the composer's native intake. A failed
-   * switch, or an environment that cannot replay clipboard bytes, degrades to
-   * the path takeover with the same files. The post-replay probe compares the
-   * draft attachment count before and after, so it observes any attachment the
-   * native intake admitted rather than images alone.
+   * Path-takeover flow: insert the same-paste text and every file as a text
+   * reference that serializes to the file's workspace path on send. The model
+   * stays exactly where it is; the agent reads the path and calls the Vision
+   * Toolkit tools on it.
    * @param sessionId - the live Session id.
    * @param target - the composer textarea the paste landed on.
-   * @param files - the captured image files.
-   * @param text - same-paste text, replayed alongside the files.
-   * @param route - the validated variant route to switch to.
-   */
-  private async autoSwitchPaste(
-    sessionId: string,
-    target: HTMLTextAreaElement,
-    files: readonly File[],
-    text: string,
-    route: PasteSwitchRoute,
-  ): Promise<void> {
-    const input = this.inputFor(sessionId)
-    try {
-      await this.switchModel(sessionId, route)
-      const { hidden } = await readDisplayConfig()
-      input.notify('info', hidden
-        ? 'Visual enhancement active: pasted images keep the native attachment flow'
-        : `Switched to ${route.label || `${route.model} (Vision Toolkit)`}; pasted images now keep the native attachment flow`)
-    } catch (error) {
-      input.notify('error', `Model switch failed; images will be sent as workspace paths: ${message(error)}`)
-      this.takeoverPaste(sessionId, target, files, text)
-      return
-    }
-    // Replaying lets the composer's own intake run (thumbnail, limits,
-    // keyboard); if the environment cannot replay clipboard bytes, the
-    // images still land as workspace paths.
-    const attachmentsBefore = draftAttachmentCount(input.state.getSnapshot())
-    const replayed = this.replayPaste(target, files, text)
-    const attachmentsAfter = draftAttachmentCount(input.state.getSnapshot())
-    if (!replayed || attachmentsAfter <= attachmentsBefore) {
-      this.takeoverPaste(sessionId, target, files, text)
-    }
-  }
-
-  /**
-   * Path-takeover flow: insert the same-paste text and every image as a text
-   * reference that serializes to the image's workspace path on send.
-   * @param sessionId - the live Session id.
-   * @param target - the composer textarea the paste landed on.
-   * @param files - the captured image files.
+   * @param files - the captured files.
    * @param text - same-paste text.
    */
   private takeoverPaste(
@@ -595,6 +529,32 @@ export class PasteImageController {
     }
   }
 
+  /** The paste currently waiting for the attach confirmation, when any. */
+  confirmState(): Readonly<PasteConfirmState> | undefined {
+    return this.pendingConfirm
+  }
+
+  /**
+   * Attach the pending paste after the user confirmed the dialog. With
+   * `remember`, every later paste in this page session attaches without
+   * asking again.
+   */
+  confirmAttach(remember: boolean): void {
+    const pending = this.pendingConfirm
+    if (pending === undefined) return
+    if (remember) this.sessionAttachConfirmed = true
+    this.pendingConfirm = undefined
+    this.changed()
+    this.takeoverPaste(pending.sessionId, pending.target, pending.files, pending.text)
+  }
+
+  /** Drop the pending paste after the user cancelled the dialog. */
+  cancelConfirm(): void {
+    if (this.pendingConfirm === undefined) return
+    this.pendingConfirm = undefined
+    this.changed()
+  }
+
   handlePaste(event: ClipboardEvent): boolean {
     if (this.replaying) return false
     const files = imageFiles(event.clipboardData)
@@ -606,13 +566,17 @@ export class PasteImageController {
     if (sessionId === undefined) return false
     const modelLabel = currentModelLabel()
     this.refreshVerdict(sessionId, modelLabel)
-    // Only a fresh host verdict acts; the native attachment flow stays the
-    // default while the host is unconfirmed.
+    // Only a fresh host verdict changes the image flow; the native attachment
+    // flow stays the default while the host is unconfirmed.
     const verdict = this.verdictFor(sessionId, modelLabel)
-    if (verdict === undefined) return false
-    // An image-capable model (the variant routes included) keeps its native
-    // paste: no switch, no takeover.
-    if (verdict.takeOver === false && verdict.autoSwitch === undefined) return false
+    // The host composer attaches images natively. Everything else — video,
+    // audio, documents — and any image paste on a route confirmed text-only
+    // (takeover or variant-autoSwitch verdict) needs the plugin flow, with
+    // an explicit attach confirmation instead of a silent model switch.
+    const needsPlugin = files.some(file => !isImageFile(file))
+      || verdict?.takeOver === true
+      || verdict?.autoSwitch !== undefined
+    if (!needsPlugin) return false
 
     event.preventDefault()
     event.stopPropagation()
@@ -622,14 +586,18 @@ export class PasteImageController {
     if (input.state.getSnapshot().phase !== 'plain') return true
 
     const text = (event.clipboardData?.getData('text/plain') ?? '').replaceAll('\uFFFC', '')
-    if (verdict.autoSwitch !== undefined) {
-      // The text-only model has an image-input variant: switch first, then
-      // let the paste flow natively so the thumbnail and durable session
-      // image are preserved.
-      void this.autoSwitchPaste(sessionId, target, files, text, verdict.autoSwitch)
+    if (this.sessionAttachConfirmed) {
+      this.takeoverPaste(sessionId, target, files, text)
       return true
     }
-    this.takeoverPaste(sessionId, target, files, text)
+    this.pendingConfirm = {
+      sessionId,
+      files: [...files],
+      text,
+      target,
+      kinds: [...new Set(files.map(fileKindLabel))],
+    }
+    this.changed()
     return true
   }
 
@@ -659,7 +627,7 @@ export class PasteImageController {
   private async upload(batch: PasteBatch, signal: AbortSignal): Promise<void> {
     if (batch.inflight !== undefined) return batch.inflight
     const active = batch.records.filter(record => this.records.get(record.ref) === record)
-    if (active.length === 0) throw new Error('Pasted images were removed before sending')
+    if (active.length === 0) throw new Error('Pasted files were removed before sending')
     const pending = active.filter(record => record.absolutePath === undefined)
     if (pending.length === 0) return
     const task = (async () => {
@@ -674,7 +642,7 @@ export class PasteImageController {
             if (signal.aborted) throw signal.reason ?? new DOMException('Aborted', 'AbortError')
             const query = new URLSearchParams({
               sessionId: batch.sessionId,
-              name: record.file.name || 'clipboard-image',
+              name: record.file.name || `clipboard-${fileKindLabel(record.file)}`,
               size: String(record.file.size),
             })
             const body = await responseJson(await fetch(`${PASTE_IMAGES_ROUTE}?${query.toString()}`, {
@@ -712,20 +680,58 @@ export class PasteImageController {
 
   private async serialize(ref: string, signal: AbortSignal): Promise<string> {
     const record = this.records.get(ref)
-    if (record === undefined) throw new Error('Pasted image is no longer available in this browser tab')
+    if (record === undefined) throw new Error('Pasted file is no longer available in this browser tab')
     await this.upload(record.batch, signal)
-    if (record.absolutePath === undefined) throw new Error('Pasted image was not copied into the workspace')
-    return `[Pasted image available at absolute path: ${JSON.stringify(record.absolutePath)}]`
+    if (record.absolutePath === undefined) throw new Error('Pasted file was not copied into the workspace')
+    return `[Pasted ${fileKindLabel(record.file)} available at absolute path: ${JSON.stringify(record.absolutePath)}]`
   }
 }
 
-/** Minimal per-image progress, failure, and removal feedback above the composer. */
+/** One pending paste awaiting the user's attach confirmation. */
+function PasteConfirmCard({ controller, kinds, count }: {
+  controller: PasteImageController
+  kinds: readonly string[]
+  count: number
+}): ReactNode {
+  const [remember, setRemember] = useState(false)
+  const kindText = kinds.join(', ')
+  const reason = kinds.length === 1 && kinds[0] === 'image'
+    ? 'текущая модель не поддерживает vision-вход напрямую'
+    : 'видео, аудио и документы прикрепляются как файлы для Vision Toolkit'
+  return <div className="dvt-paste-confirm" role="alertdialog" aria-label="Подтверждение вставки">
+    <span className="dvt-paste-confirm-text">
+      Прикрепить {kindText} ({count}) для использования плагином Vision Toolkit — {reason}.
+    </span>
+    <label className="dvt-paste-confirm-remember">
+      <input
+        type="checkbox"
+        checked={remember}
+        onChange={(event) => { setRemember(event.target.checked) }}
+      />
+      <span>Больше не показывать в этой сессии</span>
+    </label>
+    <div className="dvt-paste-confirm-actions">
+      <button type="button" className="dvt-paste-confirm-attach" onClick={() => { controller.confirmAttach(remember) }}>Прикрепить</button>
+      <button type="button" className="dvt-paste-confirm-cancel" onClick={() => { controller.cancelConfirm() }}>Отмена</button>
+    </div>
+  </div>
+}
+
+/** Minimal per-file progress, failure, removal, and attach-confirmation UI above the composer. */
 export function PasteImageDock(props: PasteDockProps): ReactNode {
   useSyncExternalStore(props.controller.subscribe, props.controller.snapshot)
+  const confirm = props.controller.confirmState()
   const occurrences = props.input.occurrences.filter(occurrence => occurrence.source === SOURCE)
   const records = props.controller.recordsFor(occurrences)
-  if (records.length === 0) return null
-  return <div className="dvt-paste-dock" role="status" aria-label="Pasted images">
+  if (confirm === undefined && records.length === 0) return null
+  return <div className="dvt-paste-dock" role="status" aria-label="Pasted files">
+    {confirm === undefined ? null : (
+      <PasteConfirmCard
+        controller={props.controller}
+        kinds={confirm.kinds}
+        count={confirm.files.length}
+      />
+    )}
     {occurrences.map((occurrence) => {
       const record = props.controller.recordsFor([occurrence])[0]
       if (record === undefined) return null
@@ -734,11 +740,11 @@ export function PasteImageDock(props: PasteDockProps): ReactNode {
           : record.status === 'error' ? record.error ?? 'copy failed'
             : humanBytes(record.file.size)
       return <div className="dvt-paste-chip" data-status={record.status} key={occurrence.occurrenceId}>
-        <span className="dvt-paste-name" title={record.file.name}>{record.file.name || 'clipboard image'}</span>
+        <span className="dvt-paste-name" title={record.file.name}>{record.file.name || 'clipboard file'}</span>
         <span className="dvt-paste-detail" title={record.error}>{detail}</span>
         <button
           type="button"
-          aria-label={`Remove ${record.file.name || 'clipboard image'}`}
+          aria-label={`Remove ${record.file.name || 'clipboard file'}`}
           disabled={props.input.phase !== 'plain' || record.status === 'copying'}
           onClick={() => { props.remove(occurrence) }}
         >×</button>

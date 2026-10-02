@@ -1,4 +1,4 @@
-/** Plugin-managed storage for images pasted into the DSH Web composer. */
+/** Plugin-managed storage for files pasted into the DSH Web composer. */
 
 import { createHash, randomUUID } from 'node:crypto'
 import { constants as fsConstants } from 'node:fs'
@@ -108,26 +108,72 @@ function declaredSize(url: URL): number {
   return value
 }
 
-function imageMediaType(req: IncomingMessage): string {
+/** Media types the paste route accepts, mapped to their file extensions. */
+const PASTE_MEDIA_TYPES: Readonly<Record<string, string>> = {
+  'image/jpeg': '.jpg',
+  'image/png': '.png',
+  'image/gif': '.gif',
+  'image/webp': '.webp',
+  'image/bmp': '.bmp',
+  'image/tiff': '.tiff',
+  'image/avif': '.avif',
+  'image/heic': '.heic',
+  'image/heif': '.heif',
+  'image/svg+xml': '.svg',
+  'video/mp4': '.mp4',
+  'video/webm': '.webm',
+  'video/quicktime': '.mov',
+  'video/x-msvideo': '.avi',
+  'video/x-matroska': '.mkv',
+  'video/3gpp': '.3gp',
+  'audio/mpeg': '.mp3',
+  'audio/wav': '.wav',
+  'audio/mp4': '.m4a',
+  'audio/aac': '.aac',
+  'audio/ogg': '.ogg',
+  'audio/opus': '.opus',
+  'audio/flac': '.flac',
+  'audio/webm': '.webm',
+  'application/pdf': '.pdf',
+  'application/msword': '.doc',
+  'application/vnd.ms-excel': '.xls',
+  'application/vnd.ms-powerpoint': '.ppt',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': '.pptx',
+}
+
+/**
+ * Hard per-media-file paste ceiling. Screenshots and short voice notes stay
+ * below it comfortably, while the glance-side `maxMediaBytes` bound still
+ * governs what is actually sent to the vision model.
+ */
+export const MAX_PASTE_MEDIA_BYTES = 100 * 1024 * 1024
+
+function pasteMediaType(req: IncomingMessage): string {
   const value = req.headers['content-type']?.split(';', 1)[0]?.trim().toLowerCase()
-  if (value === undefined || !value.startsWith('image/')) throw new TypeError('Content-Type must be image/*')
+  if (value === undefined || !(value in PASTE_MEDIA_TYPES)) {
+    throw new TypeError(`Content-Type must be one of the accepted paste types (image, video, audio, or document)`)
+  }
   return value
 }
 
+/** Whether one accepted paste media type is a non-image the host cannot attach natively. */
+export function isNonImagePasteMediaType(mediaType: string): boolean {
+  return mediaType in PASTE_MEDIA_TYPES && !mediaType.startsWith('image/')
+}
+
 function extensionFor(mediaType: string): string {
-  switch (mediaType) {
-    case 'image/jpeg': return '.jpg'
-    case 'image/png': return '.png'
-    case 'image/gif': return '.gif'
-    case 'image/webp': return '.webp'
-    case 'image/bmp': return '.bmp'
-    case 'image/tiff': return '.tiff'
-    case 'image/avif': return '.avif'
-    case 'image/heic': return '.heic'
-    case 'image/heif': return '.heif'
-    case 'image/svg+xml': return '.svg'
-    default: return '.img'
-  }
+  return PASTE_MEDIA_TYPES[mediaType] ?? (mediaType.startsWith('image/') ? '.img' : '.bin')
+}
+
+/** Fallback leaf name for one accepted paste media type. */
+function fallbackPasteName(mediaType: string): string {
+  const extension = extensionFor(mediaType)
+  if (mediaType.startsWith('image/')) return `clipboard-image${extension}`
+  if (mediaType.startsWith('video/')) return `clipboard-video${extension}`
+  if (mediaType.startsWith('audio/')) return `clipboard-audio${extension}`
+  return `clipboard-file${extension}`
 }
 
 /** Convert an untrusted browser label into one portable leaf filename. */
@@ -140,7 +186,7 @@ export function safePastedImageName(raw: string, mediaType: string): string {
     .trim()
     .replace(/[. ]+$/u, '')
   if (/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/iu.test(cleaned)) cleaned = `_${cleaned}`
-  const fallback = `clipboard-image${extensionFor(mediaType)}`
+  const fallback = fallbackPasteName(mediaType)
   const candidate = cleaned === '' || cleaned === '.' || cleaned === '..' ? fallback : cleaned
   if (Buffer.byteLength(candidate) <= MAX_NAME_BYTES) return candidate
   const extension = extname(candidate).slice(0, 20)
@@ -277,11 +323,13 @@ class PasteStorageChangedError extends Error {}
 /** Runtime limit face kept separate for focused backend tests. */
 export interface PasteImageRuntime {
   maxUploadBytes(): number
+  /** Per-media-file ceiling; defaults to {@link MAX_PASTE_MEDIA_BYTES}. */
+  maxMediaUploadBytes?(): number
   storageDirectory?(): string | undefined
   storageGeneration?(): PasteStorageGeneration
 }
 
-/** Same-origin, live-Session-bound image upload endpoint. */
+/** Same-origin, live-Session-bound paste upload endpoint. */
 export class PastedImageBackend {
   constructor(
     private readonly ctx: Context,
@@ -296,6 +344,12 @@ export class PastedImageBackend {
       generation: 0,
       ...(storageDir === undefined ? {} : { storageDir }),
     }
+  }
+
+  private uploadCap(mediaType: string): number {
+    return isNonImagePasteMediaType(mediaType)
+      ? this.runtime.maxMediaUploadBytes?.() ?? MAX_PASTE_MEDIA_BYTES
+      : this.runtime.maxUploadBytes()
   }
 
   async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -314,7 +368,7 @@ export class PastedImageBackend {
       const url = new URL(req.url ?? PASTE_IMAGES_ROUTE, 'http://dsh.internal')
       const sessionId = singleQuery(url, 'sessionId')
       const size = declaredSize(url)
-      const mediaType = imageMediaType(req)
+      const mediaType = pasteMediaType(req)
       const filename = safePastedImageName(singleQuery(url, 'name'), mediaType)
       const contentLength = req.headers['content-length']
       if (contentLength !== undefined && Number(contentLength) !== size) {
@@ -322,7 +376,7 @@ export class PastedImageBackend {
       }
       let storage = this.storageGeneration()
       let directory = await sessionPasteRoot(this.ctx, sessionId, storage.storageDir)
-      managedPath = await writeImage(req, directory.writeRoot, filename, size, this.runtime.maxUploadBytes())
+      managedPath = await writeImage(req, directory.writeRoot, filename, size, this.uploadCap(mediaType))
       for (let attempt = 0; attempt < MAX_STORAGE_GENERATION_RETRIES; attempt += 1) {
         const current = this.storageGeneration()
         if (current.generation === storage.generation && current.storageDir === storage.storageDir) {
@@ -337,11 +391,11 @@ export class PastedImageBackend {
         directory = nextDirectory
         storage = current
       }
-      throw new PasteStorageChangedError('Vision Toolkit settings changed repeatedly during image copy; retry the paste')
+      throw new PasteStorageChangedError('Vision Toolkit settings changed repeatedly during paste copy; retry the paste')
     } catch (error) {
       if (managedPath !== undefined) await rm(managedPath, { force: true }).catch(() => {})
       const status = error instanceof PasteStorageChangedError ? 409 : error instanceof RangeError ? 413 : 400
-      this.ctx.logger.warn('dsh-vision-toolkit pasted image rejected: %s', message(error))
+      this.ctx.logger.warn('dsh-vision-toolkit pasted file rejected: %s', message(error))
       requestError(res, status, 'paste-image-rejected', message(error))
     }
   }

@@ -4,6 +4,17 @@ All notable user-facing changes to DSH Vision Toolkit are documented in this fil
 
 ## [Unreleased]
 
+## [0.3.0] - fork
+
+### Added
+
+- **Attach-confirmation dialog for pasted media.** Pasting a screenshot, video, audio, or document file while the current model cannot take it natively no longer silently switches the model or takes over the composer: a confirmation card appears above the input — «Прикрепить … для использования плагином Vision Toolkit» with Прикрепить/Отмена buttons and a «Больше не показывать в этой сессии» checkbox. Confirming attaches the files as workspace-path references without touching the selected model, and with the checkbox set every later paste in the same page session attaches immediately. Cancelling drops the paste. The paste flow no longer auto-switches to image-input variant routes — the variant entries stay available for manual model selection.
+- **Video, audio, and documents paste directly into the composer.** The clipboard capture accepts media files (mp4/webm/mkv/mov/avi/3gp, mp3/wav/m4a/aac/ogg/opus/flac, pdf/docx/xlsx/pptx and legacy office types) beside images; the upload route stores them under the per-session paste root with a dedicated 100 MiB per-file ceiling, and the reference text names the kind (`[pasted video: …]`, `[Pasted audio available at absolute path: …]`). The agent then calls `vision_glance` on the path with the model's declared modalities.
+
+### Fixed
+
+- **`vision_glance` media inputs actually reach the model now.** The path fence's image-only extension whitelist rejected `.mp4`/`.wav`/`.pdf` before the modality routing ran, so every video/audio/document glance failed with «unsupported image format ".mp4"». Media files now resolve through the modality's own extension set, covered by regression tests through the full runtime (media entries, kind/mediaType/bytes in results, modality-gated rejection).
+
 ## [0.2.1] - fork
 
 ### Fixed

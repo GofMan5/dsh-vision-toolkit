@@ -16,6 +16,15 @@ import { VisionToolkitError } from './errors.ts'
 /** Supported input image extensions (the upstream client's allowlist). */
 export const SUPPORTED_IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp'] as const
 
+/** Video extensions accepted by the multimodal glance pipeline. */
+export const SUPPORTED_VIDEO_EXTENSIONS = ['.mp4', '.m4v', '.webm', '.mkv', '.mov', '.avi', '.3gp'] as const
+
+/** Audio extensions accepted by the multimodal glance pipeline. */
+export const SUPPORTED_AUDIO_EXTENSIONS = ['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.opus', '.flac'] as const
+
+/** Document extensions accepted by the multimodal glance pipeline. */
+export const SUPPORTED_DOCUMENT_EXTENSIONS = ['.pdf', '.docx', '.xlsx', '.pptx', '.doc', '.xls', '.ppt'] as const
+
 /** Resolved path policy for one tool invocation. */
 export interface PathPolicy {
   /** Real workspace root. */

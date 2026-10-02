@@ -1,10 +1,20 @@
-/** Clipboard-only multi-image input for DSH Web. */
+/** Clipboard-only file input for DSH Web: images, video, audio, and documents. */
 import { type ReactNode } from 'react';
 import type { Context as ClientContext } from '@deepseek-ai/cordis';
 import type { InputTriggerSource } from '@deepseek-ai/dsh-client-ui-input-trigger/client';
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots';
 export declare const PASTE_IMAGES_ROUTE = "/_dsh/vision-toolkit/paste-images";
 export declare const PASTE_POLICY_ROUTE = "/_dsh/vision-toolkit/paste-policy";
+/** One pending paste awaiting the user's attach confirmation. */
+interface PasteConfirmState {
+    sessionId: string;
+    files: File[];
+    text: string;
+    /** The composer textarea the paste landed on, for cursor restoration. */
+    target: HTMLTextAreaElement;
+    /** Labels for the confirm card: what kinds are in the batch. */
+    kinds: string[];
+}
 interface PasteRecord {
     ref: string;
     file: File;
@@ -41,6 +51,10 @@ export declare class PasteImageController {
     private readonly verdicts;
     /** Guards the synthetic replay paste from re-entering capture interception. */
     private replaying;
+    /** A paste awaiting the user's attach confirmation, rendered in the dock. */
+    private pendingConfirm;
+    /** Session-scoped “don't ask again”: later pastes attach immediately. */
+    private sessionAttachConfirmed;
     constructor(ctx: ClientContext);
     subscribe: (listener: () => void) => (() => void);
     snapshot: () => number;
@@ -81,48 +95,32 @@ export declare class PasteImageController {
      */
     refreshVerdict(sessionId: string, modelLabel: string): void;
     /**
-     * Switch one Session to the route the host validated, through the same
-     * model-directory seat the selector uses when present (so the shared UI
-     * state moves with the session), falling back to the raw RPC.
-     * @param sessionId - the live Session id.
-     * @param route - the validated variant route.
-     */
-    private switchModel;
-    /**
-     * Replay a swallowed paste as a synthetic clipboard event so the composer's
-     * own intake (limits, thumbnails, keyboard) runs with the captured files.
-     * @returns false when the environment cannot construct a clipboard payload.
-     */
-    private replayPaste;
-    /**
-     * Auto-switch flow: switch the Session to the image-input variant, announce
-     * it, then replay the paste into the composer's native intake. A failed
-     * switch, or an environment that cannot replay clipboard bytes, degrades to
-     * the path takeover with the same files. The post-replay probe compares the
-     * draft attachment count before and after, so it observes any attachment the
-     * native intake admitted rather than images alone.
+     * Path-takeover flow: insert the same-paste text and every file as a text
+     * reference that serializes to the file's workspace path on send. The model
+     * stays exactly where it is; the agent reads the path and calls the Vision
+     * Toolkit tools on it.
      * @param sessionId - the live Session id.
      * @param target - the composer textarea the paste landed on.
-     * @param files - the captured image files.
-     * @param text - same-paste text, replayed alongside the files.
-     * @param route - the validated variant route to switch to.
-     */
-    private autoSwitchPaste;
-    /**
-     * Path-takeover flow: insert the same-paste text and every image as a text
-     * reference that serializes to the image's workspace path on send.
-     * @param sessionId - the live Session id.
-     * @param target - the composer textarea the paste landed on.
-     * @param files - the captured image files.
+     * @param files - the captured files.
      * @param text - same-paste text.
      */
     private takeoverPaste;
+    /** The paste currently waiting for the attach confirmation, when any. */
+    confirmState(): Readonly<PasteConfirmState> | undefined;
+    /**
+     * Attach the pending paste after the user confirmed the dialog. With
+     * `remember`, every later paste in this page session attaches without
+     * asking again.
+     */
+    confirmAttach(remember: boolean): void;
+    /** Drop the pending paste after the user cancelled the dialog. */
+    cancelConfirm(): void;
     handlePaste(event: ClipboardEvent): boolean;
     remove(sessionId: string, occurrence: PasteOccurrence): void;
     private upload;
     private serialize;
 }
-/** Minimal per-image progress, failure, and removal feedback above the composer. */
+/** Minimal per-file progress, failure, removal, and attach-confirmation UI above the composer. */
 export declare function PasteImageDock(props: PasteDockProps): ReactNode;
 /** Install capture interception, the text-reference codec, and composer feedback. */
 export declare function installPasteImages(ctx: ClientContext): void;

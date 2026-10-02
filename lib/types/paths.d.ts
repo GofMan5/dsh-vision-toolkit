@@ -8,6 +8,12 @@
 import type { Stats } from 'node:fs';
 /** Supported input image extensions (the upstream client's allowlist). */
 export declare const SUPPORTED_IMAGE_EXTENSIONS: readonly [".png", ".jpg", ".jpeg", ".gif", ".webp"];
+/** Video extensions accepted by the multimodal glance pipeline. */
+export declare const SUPPORTED_VIDEO_EXTENSIONS: readonly [".mp4", ".m4v", ".webm", ".mkv", ".mov", ".avi", ".3gp"];
+/** Audio extensions accepted by the multimodal glance pipeline. */
+export declare const SUPPORTED_AUDIO_EXTENSIONS: readonly [".mp3", ".wav", ".m4a", ".aac", ".ogg", ".opus", ".flac"];
+/** Document extensions accepted by the multimodal glance pipeline. */
+export declare const SUPPORTED_DOCUMENT_EXTENSIONS: readonly [".pdf", ".docx", ".xlsx", ".pptx", ".doc", ".xls", ".ppt"];
 /** Resolved path policy for one tool invocation. */
 export interface PathPolicy {
     /** Real workspace root. */

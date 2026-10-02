@@ -33,11 +33,15 @@ import {
   createStagedDirectory,
   createStagedOutput,
   isWithin,
+  resolveAuthorizedFile,
   resolveHtmlFile,
   resolveInputFile,
   resolveOutputDirectory,
   resolveOutputFile,
   seedStagedDirectory,
+  SUPPORTED_AUDIO_EXTENSIONS,
+  SUPPORTED_DOCUMENT_EXTENSIONS,
+  SUPPORTED_VIDEO_EXTENSIONS,
   type PathPolicy,
 } from './paths.ts'
 import {
@@ -1182,14 +1186,22 @@ export class VisionToolkitRuntime {
   /**
    * Validate one non-image media file (video, audio, document) for glance.
    * Unlike images there is nothing to decode or compress: the model receives
-   * the verbatim bytes, bounded by `maxMediaBytes`.
+   * the verbatim bytes, bounded by `maxMediaBytes`. The path fence validates
+   * the file against the modality's own extension set — the image-only
+   * `resolveInputFile` whitelist would reject `.mp4`/`.wav`/`.pdf` before the
+   * kind-specific check below ever ran.
    */
   private async validateMediaFile(
     raw: string,
     kind: Exclude<VisionModalityLocal, 'image'>,
     policy: PathPolicy,
   ): Promise<MediaInfo> {
-    const file = await resolveInputFile(raw, policy)
+    const extensions = kind === 'video'
+      ? SUPPORTED_VIDEO_EXTENSIONS
+      : kind === 'audio'
+        ? SUPPORTED_AUDIO_EXTENSIONS
+        : SUPPORTED_DOCUMENT_EXTENSIONS
+    const file = await resolveAuthorizedFile(raw, policy, extensions, kind)
     const extension = extname(file.path).toLowerCase()
     const mediaType = MEDIA_TYPE_BY_EXTENSION[extension]
     if (mediaType === undefined || MEDIA_EXTENSION_KINDS[extension] !== kind) {

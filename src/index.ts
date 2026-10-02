@@ -31,7 +31,7 @@ import { bindVisionSettings } from './settings-compat.ts'
 import { createVisionTools } from './tools.ts'
 import { PLUGIN_VERSION } from './version.ts'
 import { installVisionToolkitWeb, VisionToolkitWebBackend } from './web.ts'
-import { MAX_PASTE_IMAGE_BYTES, PastedImageBackend } from './paste-images.ts'
+import { MAX_PASTE_IMAGE_BYTES, MAX_PASTE_MEDIA_BYTES, PastedImageBackend } from './paste-images.ts'
 
 export const name = '@gofman5/dsh-vision-toolkit'
 
@@ -132,6 +132,7 @@ export async function apply(ctx: Context, config: VisionToolkitConfig = {}): Pro
     : resolveConfig(settings.get())
   const pastedImages = new PastedImageBackend(ctx, {
     maxUploadBytes: () => MAX_PASTE_IMAGE_BYTES,
+    maxMediaUploadBytes: () => MAX_PASTE_MEDIA_BYTES,
     storageGeneration: () => manager.storageGeneration(),
   })
   // Image-input variants register asynchronously once eligible routes exist;
