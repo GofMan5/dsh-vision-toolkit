@@ -4,6 +4,12 @@ All notable user-facing changes to DSH Vision Toolkit are documented in this fil
 
 ## [Unreleased]
 
+## [0.2.1] - fork
+
+### Fixed
+
+- **Settings, paste, and health actions work inside the DSH Desktop window.** The desktop shell loads the app from the `dsh-app://` custom scheme and forwards renderer requests through its authenticated host proxy, which strips `Host`/`Origin`/`Sec-Fetch-Site` and attaches the host cookie — so the plugin's origin fence saw header-less requests and answered every POST with `403 The request must originate from this DSH Web application`. The fence now mirrors the host's own `/api` browser-trust boundary: `Sec-Fetch-Site: cross-site` still rejects, a present `Origin` must still match the `Host`, and Origin-less requests are trusted on loopback hosts (the desktop forwarder shape) while non-loopback hosts still require same-origin Fetch-Metadata evidence. This also fixes pasted-image upload, paste policy, and display-config requests from the desktop window — the same header-less fence applied to all of them (the upstream plugin shares this bug).
+
 ## [0.2.0] - fork
 
 This release marks the fork's first feature set on top of upstream 0.1.46: the vision model becomes a relay-backed, capability-aware choice.
