@@ -87,7 +87,7 @@ function settingsSnapshot(runtime: { ready: boolean; lastError?: string } = { re
     settings: {
       value: {
         provider: {
-          baseUrl: 'https://api.inferera.com/v1',
+          baseUrl: 'https://vision.example.com/v1',
           credential: 'VISION_API_KEY',
           model: 'gemini-3.6-flash',
           protocol: 'openai',
@@ -503,7 +503,7 @@ describe('Vision Toolkit client plugin', () => {
     expect(updateButton.disabled).toBe(true)
     expect(screen.getByText('updateSaveFirst')).toBeTruthy()
 
-    fireEvent.change(screen.getByLabelText('baseUrl'), { target: { value: 'https://api.inferera.com/v1' } })
+    fireEvent.change(screen.getByLabelText('baseUrl'), { target: { value: 'https://vision.example.com/v1' } })
     const keyInput = screen.getByLabelText('apiKey') as HTMLInputElement
     expect(keyInput.disabled).toBe(false)
     fireEvent.change(keyInput, { target: { value: 'unsaved-secret' } })

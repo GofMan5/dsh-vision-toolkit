@@ -21,34 +21,34 @@ If the version prints, the terminal environment is ready. If the command is not 
 Run the following command in the **DSH Terminal**:
 
 ```sh
-dsh plugin --profile desktop add @anionex/dsh-vision-toolkit@0.1.34
+dsh plugin --profile desktop add github:GofMan5/dsh-vision-toolkit
 ```
 
 Notes:
 
 - `--profile desktop` targets the default `desktop` profile; replace `desktop` with `web` to install into a `web` profile.
-- **Pin an exact version** (currently `0.1.34`). The DSH 1024Store marketplace catalog lags behind npm, so a one-click marketplace install can land on an older version; an explicit version guarantees the latest release.
-- If the active profile is already the target profile, you can omit `--profile desktop` and run `dsh plugin add @anionex/dsh-vision-toolkit@0.1.34` directly.
+- The fork installs as `@gofman5/dsh-vision-toolkit` from its GitHub repository. If the active profile is already the target profile, you can omit `--profile desktop` and run `dsh plugin add github:GofMan5/dsh-vision-toolkit` directly.
+- The upstream npm release (`@anionex/dsh-vision-toolkit`) installs the same way when you prefer it without the fork features.
 
 ## 3. Restart and verify
 
 1. **Fully quit DSH Desktop**: right-click the tray icon → **Quit** (closing the window only hides it).
 2. Reopen DSH Desktop.
-3. Open **Settings → Vision Toolkit** and click **Test vision model** to confirm the built-in free vision service works.
+3. Open **Settings → Vision Toolkit**, press **Load models** to pick a vision model from your relay, adjust the capability checkboxes if needed, save, and click **Test vision model** to confirm the configured service works.
 4. Paste an image into the conversation and ask directly, or invoke `/vision-skills` for the full vision workflow.
 
 ## 4. Update to a new version
 
-1. Check the latest version on the [npm page](https://www.npmjs.com/package/@anionex/dsh-vision-toolkit).
-2. In the **DSH Terminal**, rerun the install command with the new version:
+1. Check the latest commits on the [fork repository](https://github.com/GofMan5/dsh-vision-toolkit).
+2. In the **DSH Terminal**, rerun the install command so the dependency re-resolves to the current `main` head:
 
 ```sh
-dsh plugin --profile desktop add @anionex/dsh-vision-toolkit@<new-version>
+dsh plugin --profile desktop add github:GofMan5/dsh-vision-toolkit
 ```
 
 3. **Fully quit and reopen DSH Desktop** so the new version takes effect.
 
-If you installed without pinning an exact version, the official `dsh plugin update` command also works; with a pinned version such as `@0.1.34`, use the explicit-version command above.
+In-app update checks are intentionally disabled for git installations: the plugin's update panel tells you to update the source repository instead of replacing it from npm.
 
 ## Troubleshooting
 
