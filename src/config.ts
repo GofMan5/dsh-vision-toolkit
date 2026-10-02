@@ -12,6 +12,10 @@ import { credentialRef, type CredentialRef } from '@deepseek-ai/dsh-credentials'
 import SettingsService, { type SettingsNamespace } from '@deepseek-ai/dsh-settings'
 import { VisionToolkitError } from './errors.ts'
 import {
+  normalizeModelCapabilityOverrides,
+  type ModelCapabilityOverrideMap,
+} from './model-capabilities.ts'
+import {
   BUILT_IN_FREE_VISION_BASE_URL,
   BUILT_IN_FREE_VISION_CREDENTIAL,
   BUILT_IN_FREE_VISION_MODEL,
@@ -78,6 +82,12 @@ export interface VisionToolkitConfig {
     headers?: Record<string, string>
     /** Header names whose values are derived from the current operation identity. */
     sessionHeaders?: string[]
+    /**
+     * Per-model input-modality overrides keyed by model id: which content
+     * kinds (image, video, audio, document) each relay model accepts. Heuristic
+     * name-based defaults apply first; entries here win per field.
+     */
+    modelCapabilities?: ModelCapabilityOverrideMap
   }
   /** Vision output language (`zh` or `en`). */
   language?: 'zh' | 'en'
@@ -87,6 +97,8 @@ export interface VisionToolkitConfig {
   maxImageBytes?: number
   /** Maximum decoded pixel count per input image; larger images are auto-downscaled to fit. */
   maxImagePixels?: number
+  /** Maximum non-image media size in bytes (video, audio, documents) sent to the vision model. */
+  maxMediaBytes?: number
   /** In-flight tool execution cap per session. */
   concurrency?: number
   runtime?: {
@@ -151,11 +163,18 @@ export const LegacyConfig: Schema<VisionToolkitConfig> = z.object({
     userAgent: z.string().default(DEFAULT_VISION_USER_AGENT),
     headers: z.dict(z.string()).default({}),
     sessionHeaders: z.array(z.string()).default([]),
+    modelCapabilities: z.dict(z.object({
+      image: z.boolean(),
+      video: z.boolean(),
+      audio: z.boolean(),
+      document: z.boolean(),
+    })),
   }),
   language: z.union(['zh', 'en'] as const).default('zh'),
   timeoutMs: z.number().default(30000),
   maxImageBytes: z.number().default(4194304),
   maxImagePixels: z.number().default(20000000),
+  maxMediaBytes: z.number().default(33554432),
   concurrency: z.number().default(4),
   runtime: z.object({
     mode: z.union(['managed', 'external'] as const).default('managed'),
@@ -221,11 +240,14 @@ export interface ResolvedVisionToolkitConfig {
     userAgent: string
     headers: Record<string, string>
     sessionHeaders: string[]
+    /** Normalized per-model input-modality overrides (lowercased model ids). */
+    modelCapabilities: ModelCapabilityOverrideMap
   }
   language: 'zh' | 'en'
   timeoutMs: number
   maxImageBytes: number
   maxImagePixels: number
+  maxMediaBytes: number
   concurrency: number
   runtime: {
     mode: 'managed' | 'external'
@@ -246,6 +268,8 @@ export interface ResolvedVisionToolkitConfig {
 const MAX_TIMEOUT_MS = 600000
 const MAX_IMAGE_BYTES = 268435456
 const MAX_IMAGE_PIXELS = 268435456
+const MAX_MEDIA_BYTES = 268435456
+const MAX_MODEL_CAPABILITY_ENTRIES = 128
 const MAX_CONCURRENCY = 16
 const MAX_REASONING_EFFORT_LENGTH = 64
 const REASONING_EFFORT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u
@@ -399,6 +423,23 @@ export function resolveConfig(config: VisionToolkitConfig = {}): ResolvedVisionT
     throw new VisionToolkitError('config', 'provider.userAgent must not be empty')
   }
   const { headers, sessionHeaders } = normalizeProviderHeaders(provider)
+  const modelCapabilities = normalizeModelCapabilityOverrides(
+    provider.modelCapabilities,
+    MAX_MODEL_CAPABILITY_ENTRIES,
+  )
+  const rawModelCapabilities = provider.modelCapabilities
+  if (rawModelCapabilities !== undefined && Object.keys(modelCapabilities).length < Object.keys(rawModelCapabilities).length) {
+    // Silently dropping typos would hide Settings mistakes; entries that fail
+    // normalization (empty key, non-boolean flags, empty object) fail loud.
+    const kept = new Set(Object.keys(modelCapabilities))
+    const dropped = Object.keys(rawModelCapabilities).filter(key => !kept.has(key.trim().toLowerCase()))
+    if (dropped.length > 0) {
+      throw new VisionToolkitError('config', `provider.modelCapabilities has invalid entries: ${dropped.slice(0, 5).map(key => `"${key}"`).join(', ')}; use model ids with boolean image/video/audio/document flags`)
+    }
+    if (Object.keys(modelCapabilities).length >= MAX_MODEL_CAPABILITY_ENTRIES && Object.keys(rawModelCapabilities).length > MAX_MODEL_CAPABILITY_ENTRIES) {
+      throw new VisionToolkitError('config', `provider.modelCapabilities must contain at most ${MAX_MODEL_CAPABILITY_ENTRIES} models`)
+    }
+  }
   const language = config.language ?? 'zh'
   if (language !== 'zh' && language !== 'en') {
     throw new VisionToolkitError('config', 'language must be "zh" or "en"')
@@ -414,6 +455,10 @@ export function resolveConfig(config: VisionToolkitConfig = {}): ResolvedVisionT
   const maxImagePixels = config.maxImagePixels ?? 20000000
   if (!Number.isInteger(maxImagePixels) || maxImagePixels < 1 || maxImagePixels > MAX_IMAGE_PIXELS) {
     throw new VisionToolkitError('config', `maxImagePixels must be an integer between 1 and ${MAX_IMAGE_PIXELS}`)
+  }
+  const maxMediaBytes = config.maxMediaBytes ?? 33554432
+  if (!Number.isInteger(maxMediaBytes) || maxMediaBytes < 1024 || maxMediaBytes > MAX_MEDIA_BYTES) {
+    throw new VisionToolkitError('config', `maxMediaBytes must be an integer between 1024 and ${MAX_MEDIA_BYTES}`)
   }
   const concurrency = config.concurrency ?? 4
   if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > MAX_CONCURRENCY) {
@@ -451,11 +496,13 @@ export function resolveConfig(config: VisionToolkitConfig = {}): ResolvedVisionT
       baseUrl, credential, model, protocol,
       ...(reasoningEffort === undefined || reasoningEffort.length === 0 ? {} : { reasoningEffort }),
       anthropicThinking, userAgent, headers, sessionHeaders,
+      modelCapabilities,
     },
     language,
     timeoutMs,
     maxImageBytes,
     maxImagePixels,
+    maxMediaBytes,
     concurrency,
     runtime: {
       mode,

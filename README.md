@@ -16,15 +16,32 @@
 [![MIT](https://img.shields.io/badge/license-MIT-0B7285?style=flat-square)](LICENSE)
 [![DSH](https://img.shields.io/badge/DSH-Web%20%2B%20Headless-5B4CF0?style=flat-square)](cordis.patch.yml)
 
+> **fork:** this is [GofMan5/dsh-vision-toolkit](https://github.com/GofMan5/dsh-vision-toolkit), a fork of [Anionex/dsh-vision-toolkit](https://github.com/Anionex/dsh-vision-toolkit) (upstream 0.1.46) that turns the vision model into a **relay-backed, capability-aware choice** — pick models straight from your OpenAI-compatible relay and declare per model whether it accepts images, video, audio, and documents. Everything below still applies; the fork additions are summarized first.
+
 **A more powerful vision toolkit—give text-only models in DeepSeek Harness eyes: image Q&A, long-screenshot OCR, UI restoration, and GUI visual tasks in one toolkit and Skill.**
 
 🚀 Paste an image and ask directly | Install with one command | Broad use cases
 
-[Highlights](#highlights) | [Quick start](#quick-start-three-steps) | [Toolbox](#toolbox) | [Configuration and limits](#configuration-and-limits) | [Troubleshooting](#troubleshooting) | [Community](#development-and-community)
+[Highlights](#highlights) | [What this fork adds](#what-this-fork-adds) | [Quick start](#quick-start-three-steps) | [Toolbox](#toolbox) | [Configuration and limits](#configuration-and-limits) | [Troubleshooting](#troubleshooting) | [Community](#development-and-community)
 
 🌐 **English** | [中文](README.zh.md)
 
 </div>
+
+## What this fork adds
+
+- **Model picker from the relay.** In Settings → Vision service, press **Load models**: the plugin queries `GET {baseUrl}/models` with your saved credential (OpenAI- and Anthropic-shaped responses are parsed, de-duplicated, capped at 500), and offers the catalog as a dropdown next to the model field. It uses the in-progress form values, so it works before the first save; every entry is annotated with its detected modalities.
+- **Per-model capability matrix.** Checkboxes for **Images / Video / Audio / Documents** describe what the selected vision model accepts. Heuristic name-based defaults prefill them (Qwen-Max 0902+ and omni models → all four; `*-vl` families → image+video; Claude → image+PDF; Gemini → all four; text tiers like `qwen-turbo`, `glm-*`, `deepseek-*` → none; image-generation models like `qwen-image-*` → none). Toggles that match the detected default are dropped, so the stored map only keeps real deviations; *Reset to detected* restores the heuristic.
+- **Multimodal `vision_glance`.** The glance tool now accepts video (`.mp4/.webm/.mkv/.mov/.avi/.m4v/.3gp`), audio (`.mp3/.wav/.m4a/.aac/.ogg/.opus/.flac`), and documents (`.pdf/.docx/.xlsx/.pptx/.doc/.xls/.ppt`) next to images, bounded by a configurable `maxMediaBytes` (default 32 MiB). Inputs are routed to protocol-appropriate content parts:
+  - **OpenAI Chat Completions** — `image_url`, `video_url` (Qwen/DashScope-compatible), `input_audio`, and the `file` part for documents;
+  - **OpenAI Responses** — `input_image` and `input_file`;
+  - **Anthropic Messages** — image and PDF `document` blocks.
+
+  Non-image inputs appear in the tool result as a `media` array (kind, media type, bytes).
+- **Capability gating with actionable errors.** When the model does not accept a modality, glance refuses *before any bytes move* — once in the TypeScript runtime and again in the Python client via the new `VISION_MODALITIES` env var — with a message that points at the Settings matrix. Switching the vision model degrades predictably: the same `vision_glance` call works on a fully multimodal Qwen and fails loudly on a text-only model instead of returning an opaque provider error.
+- **How chat-side media reaches the model.** DSH's host attachment contract stays text+image; video, audio, and document attachments keep arriving as durable file handles with workspace paths, so a text-only chat model sees the path and calls `vision_glance` on it — which now works because the *vision* model accepts the modality. The existing paste takeover and image-input variants are unchanged.
+
+> **External runtime mode note:** the vendored `agent-vision-toolkit` snapshot carries the fork's multimodal content-part changes and its `UPSTREAM_MANIFEST.json` was regenerated, so `runtime.mode: external` requires an exact export of this fork's `vendor/agent-vision-toolkit` directory (a clean checkout of upstream no longer matches). Managed mode — the default — is unaffected.
 
 🏆 This project is the first comprehensive vision-tool plugin in the DeepSeek Harness ecosystem: it was initiated before internal beta and built during the beta with reference to [`agent-vision-toolkit`](https://github.com/Anionex/agent-vision-toolkit).
 
@@ -87,6 +104,7 @@ dsh plugin --profile web add @anionex/dsh-vision-toolkit
 
 ## Recent updates
 
+- **fork 0.2.0 · Relay model picker + capability matrix:** Settings can load the model catalog from the relay (`GET /models`), every model carries detected input modalities, and per-model overrides declare what it accepts. `vision_glance` now takes video, audio, and document files alongside images and routes them to `video_url` / `input_audio` / `file` (or `input_file` / Anthropic document) content parts; unsupported modalities fail with an actionable error before any bytes are sent.
 - **2026-08-20 · AIHubMix setup guide:** Added a screenshot-based guide for getting an API key through the Inferera entry and configuring the Gemini 3.7 Flash vision model; Settings now links directly to this guide.
 - **2026-08-19 · Transparent routing by default:** The model selector keeps one entry per model with the original name, and image input (paste, history, `read_image`) works without manually switching to a `(Vision Toolkit)` variant. Disable “Transparent variant routing” in advanced settings → image input to restore the explicit entries.
 - **2026-08-16 · Windows Python:** Added Microsoft Store Python support, fixing first-time isolated-runtime setup failures for affected Windows users.
@@ -157,6 +175,14 @@ The bundled `vision-skills` Skill carries the complete upstream playbooks, expla
 
 ### 1. Install
 
+Install **this fork** from its GitHub repository (keeps the `@anionex/dsh-vision-toolkit` package id, so existing profile patches keep matching):
+
+```sh
+dsh plugin --profile web add github:GofMan5/dsh-vision-toolkit
+```
+
+The upstream npm release works exactly the same way, minus the fork features:
+
 ```sh
 dsh plugin --profile web add @anionex/dsh-vision-toolkit
 ```
@@ -164,13 +190,13 @@ dsh plugin --profile web add @anionex/dsh-vision-toolkit
 You can install it into a Headless Profile too:
 
 ```sh
-dsh plugin --profile headless add @anionex/dsh-vision-toolkit
+dsh plugin --profile headless add github:GofMan5/dsh-vision-toolkit
 ```
 
 Using DSH Desktop? It bundles its own `dsh` CLI and intentionally does not add it to your system PATH. Open **DSH Terminal** from the tray and run the command there, targeting the Desktop profile:
 
 ```sh
-dsh plugin --profile desktop add @anionex/dsh-vision-toolkit
+dsh plugin --profile desktop add github:GofMan5/dsh-vision-toolkit
 ```
 
 Then restart DSH Desktop. The built-in plugin marketplace in DSH Desktop 2.0.1 has known installation issues; the terminal command above is the reliable path until a fixed Desktop release is available.
@@ -179,7 +205,7 @@ For the full Desktop install, update, and troubleshooting walkthrough, see [Inst
 
 ### 2. Restart and check it
 
-Restart a running Web Profile, then open **Settings → Vision Toolkit**, configure a vision provider, and run **Test vision model** to confirm it is reachable.
+Restart a running Web Profile, then open **Settings → Vision Toolkit**, configure a vision provider, and run **Test vision model** to confirm it is reachable. Point the Base URL at an OpenAI-compatible relay and press **Load models** to pick the vision model from its catalog; the capability checkboxes below the model field show what it accepts (adjust them if the name-based defaults are off), then save.
 
 The first start prepares an isolated runtime: the plugin prefers a system Python 3.11+; when none is found, it downloads a hash-verified standalone Python (about 35 MB) from the domestic mirror (`dsh-vision-python-bootstrap-1317715800.cos.ap-guangzhou.myqcloud.com`) on first use, falling back to the GitHub release when the mirror is unreachable. The locked runtime dependencies (Pillow, NumPy, vtracer) are installed from the Tencent Cloud PyPI mirror (`mirrors.cloud.tencent.com/pypi/simple`) first and fall back to the official PyPI index. A normal installation does not require an `agent-vision-toolkit` source checkout or a local path setting.
 

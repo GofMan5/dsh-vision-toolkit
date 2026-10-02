@@ -9,12 +9,24 @@ import type { Context } from '@deepseek-ai/cordis';
 import { ArtifactAccessController } from './artifact-access.ts';
 import { PastedImageBackend, type PasteSelectionQuery, type PasteVerdict } from './paste-images.ts';
 import { type VisionToolkitConfig } from './config.ts';
+import { type ModelCapabilities } from './model-capabilities.ts';
 import { type PluginUpdateCapability, type PluginUpdateCheck, type PluginUpdateResult } from './plugin-update.ts';
 import { VisionToolkitRuntimeManager, type PreparedRuntimeGeneration, type RuntimeManagerStatus } from './runtime-manager.ts';
 /** Exact route used by the browser Settings page. */
 export declare const SETTINGS_ROUTE = "/_dsh/vision-toolkit/settings";
 /** Same-origin route used by the browser client to read display-mode flags. */
 export declare const DISPLAY_CONFIG_ROUTE = "/_dsh/vision-toolkit/display-config";
+/** Effective model capability facts for the configured vision model. */
+export interface VisionToolkitCapabilitySnapshot {
+    /** The model these facts describe. */
+    model: string;
+    /** Effective capabilities after the user's per-model overrides. */
+    effective: ModelCapabilities;
+    /** Heuristic defaults for the model id. */
+    detected: ModelCapabilities;
+    /** Whether an override entry changes the detected default. */
+    overridden: boolean;
+}
 /** Public Settings snapshot; credential values are deliberately impossible here. */
 export interface VisionToolkitSettingsSnapshot {
     schemaVersion: 1;
@@ -32,6 +44,7 @@ export interface VisionToolkitSettingsSnapshot {
         source?: string;
         writable: boolean;
     };
+    capabilities: VisionToolkitCapabilitySnapshot;
     runtime: RuntimeManagerStatus;
     release: {
         pluginVersion: string;
@@ -71,11 +84,20 @@ export declare class VisionToolkitWebBackend {
     /** Supply the active listener address before the Settings route becomes reachable. */
     configureWebServer(host: string, port: number): void;
     private credential;
+    /** Model capability facts for one resolved configuration. */
+    private capabilityFacts;
     /** Build the current settings/runtime/credential snapshot without secrets. */
     snapshot(): Promise<VisionToolkitSettingsSnapshot>;
     private save;
     private saveCredential;
     private health;
+    /**
+     * Fetch the relay model catalog with detected capabilities. An in-progress
+     * provider draft takes priority over the stored configuration so the picker
+     * works before the first save; invalid drafts fail loud at the schema
+     * boundary instead of silently listing the previous provider.
+     */
+    private listModels;
     /** Handle the exact Settings route. */
     handle(req: IncomingMessage, res: ServerResponse): Promise<void>;
 }

@@ -8,6 +8,7 @@
 import type Schema from '@deepseek-ai/schemastery';
 import { type CredentialRef } from '@deepseek-ai/dsh-credentials';
 import { type SettingsNamespace } from '@deepseek-ai/dsh-settings';
+import { type ModelCapabilityOverrideMap } from './model-capabilities.ts';
 export { BUILT_IN_FREE_VISION_BASE_URL, BUILT_IN_FREE_VISION_CREDENTIAL, BUILT_IN_FREE_VISION_KEY, BUILT_IN_FREE_VISION_MODEL, } from './defaults.ts';
 /** Settings document namespace owned by this plugin. */
 export declare const VISION_TOOLKIT_SETTINGS_NAMESPACE: SettingsNamespace;
@@ -34,6 +35,12 @@ export interface VisionToolkitConfig {
         headers?: Record<string, string>;
         /** Header names whose values are derived from the current operation identity. */
         sessionHeaders?: string[];
+        /**
+         * Per-model input-modality overrides keyed by model id: which content
+         * kinds (image, video, audio, document) each relay model accepts. Heuristic
+         * name-based defaults apply first; entries here win per field.
+         */
+        modelCapabilities?: ModelCapabilityOverrideMap;
     };
     /** Vision output language (`zh` or `en`). */
     language?: 'zh' | 'en';
@@ -43,6 +50,8 @@ export interface VisionToolkitConfig {
     maxImageBytes?: number;
     /** Maximum decoded pixel count per input image; larger images are auto-downscaled to fit. */
     maxImagePixels?: number;
+    /** Maximum non-image media size in bytes (video, audio, documents) sent to the vision model. */
+    maxMediaBytes?: number;
     /** In-flight tool execution cap per session. */
     concurrency?: number;
     runtime?: {
@@ -114,11 +123,14 @@ export interface ResolvedVisionToolkitConfig {
         userAgent: string;
         headers: Record<string, string>;
         sessionHeaders: string[];
+        /** Normalized per-model input-modality overrides (lowercased model ids). */
+        modelCapabilities: ModelCapabilityOverrideMap;
     };
     language: 'zh' | 'en';
     timeoutMs: number;
     maxImageBytes: number;
     maxImagePixels: number;
+    maxMediaBytes: number;
     concurrency: number;
     runtime: {
         mode: 'managed' | 'external';

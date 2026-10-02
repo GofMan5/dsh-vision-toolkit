@@ -92,6 +92,171 @@ def image_path_to_data_url(path: str | os.PathLike[str]) -> str:
     return f"data:{mime};base64,{base64.b64encode(image_path.read_bytes()).decode()}"
 
 
+# Media kinds accepted by the multimodal pipeline. The kind of one input is
+# decided by its media type; VISION_MODALITIES (set by the DSH runtime from
+# the per-model capability matrix) gates which kinds may actually be sent.
+MEDIA_KINDS = {"image", "video", "audio", "document"}
+
+_DOCUMENT_MEDIA_TYPES = {
+    "application/pdf": ".pdf",
+    "application/msword": ".doc",
+    "application/vnd.ms-excel": ".xls",
+    "application/vnd.ms-powerpoint": ".ppt",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+}
+
+_EXTENSION_MEDIA_TYPES = {
+    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+    ".gif": "image/gif", ".webp": "image/webp",
+    ".mp4": "video/mp4", ".m4v": "video/mp4", ".webm": "video/webm",
+    ".mkv": "video/x-matroska", ".mov": "video/quicktime",
+    ".avi": "video/x-msvideo", ".3gp": "video/3gpp",
+    ".mp3": "audio/mpeg", ".wav": "audio/wav", ".m4a": "audio/mp4",
+    ".aac": "audio/aac", ".ogg": "audio/ogg", ".opus": "audio/opus",
+    ".flac": "audio/flac",
+    ".pdf": "application/pdf", ".doc": "application/msword",
+    ".xls": "application/vnd.ms-excel", ".ppt": "application/vnd.ms-powerpoint",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+}
+
+
+def enabled_modalities() -> frozenset[str]:
+    """Input modalities the configured model accepts.
+
+    ``VISION_MODALITIES`` is a comma/space separated list (image, video,
+    audio, document). An unset variable keeps the historical image-only
+    behavior; an explicitly empty value disables every modality so a
+    text-only model fails loudly instead of receiving bytes it cannot read.
+    """
+    raw = os.environ.get("VISION_MODALITIES")
+    if raw is None:
+        return frozenset({"image"})
+    return frozenset(
+        token.strip().lower()
+        for token in raw.replace(",", " ").split()
+        if token.strip().lower() in MEDIA_KINDS
+    )
+
+
+def _modality_error(modality: str) -> VisionError:
+    return VisionError(
+        f"the configured model does not accept {modality} input "
+        "(VISION_MODALITIES); adjust the model capabilities in Vision Toolkit Settings"
+    )
+
+
+def media_path_to_data_url(path: str | os.PathLike[str]) -> str:
+    """Load one image, video, audio, or document file as a data URL."""
+    media_path = Path(path).expanduser()
+    if not media_path.is_file():
+        raise VisionError(f"Media file not found: {media_path}")
+    extension = media_path.suffix.lower()
+    media_type = _EXTENSION_MEDIA_TYPES.get(extension)
+    if media_type is None:
+        raise VisionError(
+            "Unsupported input type; accepted extensions: "
+            + ", ".join(sorted(_EXTENSION_MEDIA_TYPES))
+        )
+    return f"data:{media_type};base64,{base64.b64encode(media_path.read_bytes()).decode()}"
+
+
+def _media_kind(url: str) -> str:
+    """Classify one input URL as image, video, audio, or document."""
+    if not url.startswith("data:"):
+        # http(s) URLs keep the legacy image interpretation; providers fetch
+        # them server-side and glance only produces data URLs for local files.
+        return "image"
+    header, separator, _ = url.partition(",")
+    if separator == "" or ";base64" not in header:
+        raise VisionError("Data URLs must use base64 encoding")
+    media_type = header[5:].split(";", 1)[0].strip().lower()
+    if media_type.startswith("image/"):
+        return "image"
+    if media_type.startswith("video/"):
+        return "video"
+    if media_type.startswith("audio/"):
+        return "audio"
+    if media_type in _DOCUMENT_MEDIA_TYPES:
+        return "document"
+    raise VisionError(f"Unsupported media type: {media_type}")
+
+
+def _data_url_parts(url: str) -> tuple[str, str]:
+    """Split one data URL into (media type, raw base64 payload)."""
+    header, separator, data = url.partition(",")
+    if separator == "" or ";base64" not in header:
+        raise VisionError("Data URLs must use base64 encoding")
+    return header[5:].split(";", 1)[0].strip().lower(), data
+
+
+def _document_filename(media_type: str) -> str:
+    return "document" + _DOCUMENT_MEDIA_TYPES.get(media_type, ".bin")
+
+
+def _chat_completion_part(url: str, kind: str) -> dict:
+    """One content part for OpenAI Chat Completions requests."""
+    if kind == "image":
+        return {"type": "image_url", "image_url": {"url": url}}
+    if kind == "video":
+        return {"type": "video_url", "video_url": {"url": url}}
+    if kind == "audio":
+        media_type, data = _data_url_parts(url)
+        # OpenAI-compatible relays (including DashScope-compatible Qwen
+        # endpoints) accept input_audio with the raw base64 payload and the
+        # container format name.
+        audio_format = media_type.split("/")[-1]
+        if audio_format in {"mpeg", "mp4", "wav", "ogg", "flac", "aac", "opus", "webm"}:
+            pass
+        elif audio_format == "x-matroska":
+            audio_format = "webm"
+        else:
+            audio_format = "mp3"
+        return {"type": "input_audio", "input_audio": {"data": data, "format": audio_format}}
+    media_type, _ = _data_url_parts(url)
+    # DashScope-compatible Qwen endpoints accept base64 documents through the
+    # file content part.
+    return {"type": "file", "file": {"file_data": url, "file_name": _document_filename(media_type)}}
+
+
+def _responses_part(url: str, kind: str) -> dict:
+    """One content part for OpenAI Responses requests."""
+    if kind == "image":
+        return {"type": "input_image", "image_url": url}
+    if kind == "audio" or kind == "video":
+        raise VisionError(
+            f"the OpenAI Responses protocol does not support {kind} input; "
+            "switch the provider protocol to OpenAI Chat Completions or use a relay that translates it"
+        )
+    media_type, _ = _data_url_parts(url)
+    return {
+        "type": "input_file",
+        "file": {"file_data": url, "filename": _document_filename(media_type)},
+    }
+
+
+def _anthropic_document_source(url: str) -> dict:
+    media_type, data = _data_url_parts(url)
+    if media_type != "application/pdf":
+        raise VisionError("Anthropic document input supports PDF only")
+    return {"type": "base64", "media_type": media_type, "data": data}
+
+
+def _anthropic_part(url: str, kind: str) -> dict:
+    """One content part for Anthropic Messages requests."""
+    if kind == "image":
+        return {"type": "image", "source": _anthropic_image_source(url)}
+    if kind == "document":
+        return {"type": "document", "source": _anthropic_document_source(url)}
+    raise VisionError(
+        f"the Anthropic Messages protocol does not support {kind} input; "
+        "switch the provider protocol to OpenAI Chat Completions or use a relay that translates it"
+    )
+
+
 def _message_text(message: object) -> str:
     if isinstance(message, str):
         return message.strip()
@@ -198,7 +363,11 @@ def _retryable_http_error(status: int, body: bytes) -> bool:
 
 def describe_image(image_url: str | list[str], prompt: str | None = None, max_tokens: int = 4096,
                    apply_lang: bool = True) -> str:
-    """Describe one data/http image URL (str) or several (list) in a single call."""
+    """Describe one data/http image URL (str) or several (list) in a single call.
+
+    Beyond images, data URLs carrying video, audio, or documents are routed to
+    protocol-appropriate content parts, gated by the enabled modalities.
+    """
     validate_vision_config()
     urls = [image_url] if isinstance(image_url, str) else list(image_url)
     if not urls:
@@ -216,12 +385,21 @@ def describe_image(image_url: str | list[str], prompt: str | None = None, max_to
             text = f"{instruction}\n\n{text}"
     model = _required("VISION_MODEL")
     protocol = os.environ.get("VISION_API_PROTOCOL", "").strip().lower() or "chat_completions"
+
+    modalities = enabled_modalities()
+    kinds = []
+    for url in urls:
+        kind = _media_kind(url)
+        if kind not in modalities:
+            raise _modality_error(kind)
+        kinds.append(kind)
+
     if protocol == "responses":
         payload = {
             "model": model,
             "store": False,
             "input": [{"role": "user", "content": [
-                {"type": "input_image", "image_url": url} for url in urls
+                _responses_part(url, kind) for url, kind in zip(urls, kinds)
             ] + [{"type": "input_text", "text": text}]}],
         }
         if max_tokens is not None:
@@ -235,7 +413,7 @@ def describe_image(image_url: str | list[str], prompt: str | None = None, max_to
         payload = {
             "model": model,
             "messages": [{"role": "user", "content": [
-            {"type": "image_url", "image_url": {"url": url}} for url in urls
+                _chat_completion_part(url, kind) for url, kind in zip(urls, kinds)
             ] + [{"type": "text", "text": text}]}],
         }
         if max_tokens is not None:
@@ -247,7 +425,7 @@ def describe_image(image_url: str | list[str], prompt: str | None = None, max_to
             "model": model,
             "max_tokens": max_tokens if max_tokens is not None else 4096,
             "messages": [{"role": "user", "content": [
-                {"type": "image", "source": _anthropic_image_source(url)} for url in urls
+                _anthropic_part(url, kind) for url, kind in zip(urls, kinds)
             ] + [{"type": "text", "text": text}]}],
         }
         thinking = os.environ.get("VISION_ANTHROPIC_THINKING", "").strip().lower() or "omit"

@@ -67,6 +67,22 @@ const en = {
   credential: 'Credential name',
   credentialHint: 'The built-in free provider needs no user key. For a custom provider, this is the DSH credential reference used to store its key.',
   model: 'Model',
+  modelHint: 'Type a model id, or load the catalog from the relay and pick one.',
+  loadModels: 'Load models',
+  loadingModels: 'Loading…',
+  pickModelPlaceholder: '{count} models from the relay — pick one',
+  reloadModels: 'Reload list',
+  capabilities: 'Model capabilities',
+  capabilitiesHint: 'What the selected model accepts as vision input (vision_glance and pasted images route through it). Detected defaults are pre-filled; toggling saves an override for this exact model.',
+  capImage: 'Images',
+  capVideo: 'Video',
+  capAudio: 'Audio',
+  capDocument: 'Documents',
+  capabilitiesTextOnly: 'Text only',
+  capabilitiesDetected: 'detected',
+  capabilitiesOverridden: 'overridden',
+  resetCapabilities: 'Reset to detected',
+  capabilitiesSummary: 'Accepts: {list}',
   protocol: 'API protocol',
   reasoningEffort: 'Vision service reasoning effort',
   reasoningEffortHint: 'Optional. Common values: none, minimal, low, medium, high, xhigh. Supported values and billing depend on the model or proxy; higher effort may increase tokens, latency, and cost. Requests send store:false, but you should still verify the provider\'s data-retention policy.',
@@ -79,6 +95,7 @@ const en = {
   timeout: 'Request timeout (ms)',
   maxBytes: 'Maximum image bytes',
   maxPixels: 'Maximum image pixels',
+  maxMediaBytes: 'Maximum media file bytes (video/audio/document)',
   concurrency: 'Concurrent calls per session',
   runtime: 'Runtime',
   runtimeMode: 'Runtime mode',
@@ -261,6 +278,22 @@ const zh: Record<LocaleKey, string> = {
   credential: '凭据名称',
   credentialHint: '内置免费视觉服务无需用户密钥；切换到自定义服务时，此处是保存其密钥的 DSH 凭据名称。',
   model: '模型名称',
+  modelHint: '手动输入模型 ID，或从中继加载模型列表后选择。',
+  loadModels: '加载模型',
+  loadingModels: '加载中…',
+  pickModelPlaceholder: '中继上的 {count} 个模型 — 选择一个',
+  reloadModels: '重新加载',
+  capabilities: '模型能力',
+  capabilitiesHint: '所选模型能接受的视觉输入类型（vision_glance 与粘贴图片走此模型）。默认值按模型名自动检测；勾选后将为该模型保存覆盖值。',
+  capImage: '图片',
+  capVideo: '视频',
+  capAudio: '音频',
+  capDocument: '文档',
+  capabilitiesTextOnly: '纯文本',
+  capabilitiesDetected: '自动检测',
+  capabilitiesOverridden: '已覆盖',
+  resetCapabilities: '恢复检测值',
+  capabilitiesSummary: '接受：{list}',
   protocol: 'API 协议',
   reasoningEffort: '视觉服务推理强度',
   reasoningEffortHint: '可选。常见值：none、minimal、low、medium、high、xhigh。实际支持值和计费由模型或代理决定；较高强度可能增加 token、延迟和费用。请求会发送 store:false，但仍应核查服务商的数据保留政策。',
@@ -273,6 +306,7 @@ const zh: Record<LocaleKey, string> = {
   timeout: '单次请求超时（毫秒）',
   maxBytes: '单张图片大小上限（字节）',
   maxPixels: '单张图片最大像素数',
+  maxMediaBytes: '单个媒体文件大小上限（字节，视频/音频/文档）',
   concurrency: '单个会话最多并发任务数',
   runtime: '工具运行环境',
   runtimeMode: '环境来源',
@@ -500,11 +534,13 @@ interface SettingsValue {
     userAgent?: string
     headers?: Record<string, string>
     sessionHeaders?: string[]
+    modelCapabilities?: Record<string, Partial<ClientCapabilities>>
   }
   language?: 'zh' | 'en'
   timeoutMs?: number
   maxImageBytes?: number
   maxImagePixels?: number
+  maxMediaBytes?: number
   concurrency?: number
   runtime?: { mode?: 'managed' | 'external'; agentVisionToolkitPath?: string; python?: string }
   storageDir?: string
@@ -516,6 +552,77 @@ interface SettingsValue {
     autoSwitch?: boolean
     hidden?: boolean
   }
+}
+
+/** Input modalities one vision model can accept (display order). */
+const CAPABILITY_MODALITIES = ['image', 'video', 'audio', 'document'] as const
+type ClientModality = (typeof CAPABILITY_MODALITIES)[number]
+
+/** Effective per-model input capabilities. Text is always assumed. */
+interface ClientCapabilities {
+  image: boolean
+  video: boolean
+  audio: boolean
+  document: boolean
+}
+
+/**
+ * Name-based capability defaults for instant previews. Keep aligned with
+ * src/model-capabilities.ts — the server copy is the enforcement authority,
+ * this copy only pre-fills the Settings checkboxes before the first save.
+ */
+interface ClientCapabilityRule {
+  pattern: RegExp
+  capabilities: ClientCapabilities
+}
+
+const CLIENT_CAPABILITY_RULES: readonly ClientCapabilityRule[] = [
+  { pattern: /(?:^|[/.\-_])(?:qwen-image|wan[\w.\-]*image|z-image|dall-e|dalle|flux|sdxl|stable-diffusion|seedream|seededit|cogview|imagen|midjourney)(?:$|[/.\-_])/u, capabilities: { image: false, video: false, audio: false, document: false } },
+  { pattern: /(?:^|[/.\-_])qwen-(?:turbo|plus|textra|long)(?:$|[/.\-0-9])/u, capabilities: { image: false, video: false, audio: false, document: false } },
+  { pattern: /-vl|qwen[\w.\-]*vl|vision|pixtral|llava|internvl|glmv|moondream|minicpm-v|kosmos|cogvlm|ferret|qvq|gemma-3|molmo|smolvlm|glm-\d+(?:\.\d+)?v(?:$|[-.\d])/u, capabilities: { image: true, video: true, audio: false, document: false } },
+  { pattern: /(?:^|[/.\-_])qwen[\w.\-]*-?max(?:$|[/.\-_0-9])/u, capabilities: { image: true, video: true, audio: true, document: true } },
+  { pattern: /(?:^|[/.\-_])qwen[\w.\-]*omni(?:$|[/.\-_])/u, capabilities: { image: true, video: true, audio: true, document: true } },
+  { pattern: /^gemini[\w.\-]*$/u, capabilities: { image: true, video: true, audio: true, document: true } },
+  { pattern: /(?:^|[/.\-_])(?:minimax|abab)[\w.\-]*omni/u, capabilities: { image: true, video: true, audio: true, document: true } },
+  { pattern: /(?:^|[/.\-_])(?:gpt-4o|chatgpt-4o|gpt-4\.1)(?:$|[/.\-_])/u, capabilities: { image: true, video: false, audio: true, document: false } },
+  { pattern: /(?:^|[/.\-_])claude/u, capabilities: { image: true, video: false, audio: false, document: true } },
+  { pattern: /(?:^|[/.\-_])(?:grok[\w.\-]*(?:vision|4))(?:$|[/.\-_])/u, capabilities: { image: true, video: false, audio: false, document: true } },
+  { pattern: /(?:^|[/.\-_])(?:gpt-4-turbo|gpt-4-vision|gpt-5|gpt-6|o3|o4)(?:$|[/.\-_])/u, capabilities: { image: true, video: false, audio: false, document: false } },
+  { pattern: /(?:^|[/.\-_])(?:deepseek|glm|kimi|mistral|mixtral|o1|doubao|hunyuan|ernie|command|phi-|granite)(?:$|[/.\-_])/u, capabilities: { image: false, video: false, audio: false, document: false } },
+]
+
+function detectClientCapabilities(model: string): ClientCapabilities {
+  const id = model.trim().toLowerCase()
+  for (const rule of CLIENT_CAPABILITY_RULES) {
+    if (rule.pattern.test(id)) return { ...rule.capabilities }
+  }
+  // Unknown ids keep the legacy image-only behavior; text-only families are
+  // positively excluded above and can be re-enabled per model.
+  return { image: true, video: false, audio: false, document: false }
+}
+
+/** Effective capabilities for the draft model: override ?? detected. */
+function effectiveClientCapabilities(
+  model: string,
+  overrides: Record<string, Partial<ClientCapabilities>> | undefined,
+): { effective: ClientCapabilities; detected: ClientCapabilities; overridden: boolean } {
+  const detected = detectClientCapabilities(model)
+  const entry = overrides?.[model.trim().toLowerCase()]
+  if (entry === undefined) return { effective: detected, detected, overridden: false }
+  const effective: ClientCapabilities = {
+    image: entry.image ?? detected.image,
+    video: entry.video ?? detected.video,
+    audio: entry.audio ?? detected.audio,
+    document: entry.document ?? detected.document,
+  }
+  const overridden = CAPABILITY_MODALITIES.some(modality => entry[modality] !== undefined && entry[modality] !== detected[modality])
+  return { effective, detected, overridden }
+}
+
+/** One relay catalog entry from the list-models action. */
+interface RelayModelEntry {
+  id: string
+  capabilities: ClientCapabilities
 }
 
 type PluginUpdateUnavailableReason =
@@ -564,6 +671,12 @@ interface SettingsSnapshot {
   writable: boolean
   settings: { value: SettingsValue; revision: number; applies: 'live' }
   credential: { ref: string; configured: boolean; source?: string; writable: boolean }
+  capabilities: {
+    model: string
+    effective: ClientCapabilities
+    detected: ClientCapabilities
+    overridden: boolean
+  }
   runtime: {
     ready: boolean
     generation: number
@@ -940,7 +1053,8 @@ interface SettingsState {
   health?: HealthResult | undefined
   update?: PluginUpdateCheck | undefined
   restart?: PluginUpdateResult | undefined
-  action?: 'save' | 'health' | 'connection' | 'model' | 'check-update' | 'apply-update' | undefined
+  models?: RelayModelEntry[] | undefined
+  action?: 'save' | 'health' | 'connection' | 'model' | 'list-models' | 'check-update' | 'apply-update' | undefined
   message?: string | undefined
   error?: string | undefined
 }
@@ -1063,6 +1177,36 @@ export class VisionSettingsController {
     }
   }
 
+  /**
+   * Load the model catalog from the relay. The in-progress provider draft
+   * (baseUrl, credential, protocol) rides along so the picker works before
+   * the first save; the backend resolves the credential itself.
+   */
+  async listModels(provider: {
+    baseUrl: string
+    credential: string
+    protocol: 'openai' | 'responses' | 'anthropic'
+  }): Promise<void> {
+    this.set({ ...this.state, action: 'list-models', error: undefined, message: undefined })
+    try {
+      const catalog = await apiRequest<{ models: RelayModelEntry[] }>({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'list-models',
+          provider: {
+            baseUrl: provider.baseUrl,
+            credential: provider.credential,
+            protocol: provider.protocol,
+          },
+        }),
+      })
+      this.set({ ...this.state, action: undefined, models: catalog.models })
+    } catch (error) {
+      this.set({ ...this.state, action: undefined, error: error instanceof Error ? error.message : String(error) })
+    }
+  }
+
   async checkUpdate(): Promise<void> {
     this.set({ ...this.state, action: 'check-update', error: undefined, message: undefined })
     try {
@@ -1111,10 +1255,12 @@ interface Draft {
   userAgent: string
   providerHeaders: Record<string, string>
   providerSessionHeaders: string[]
+  modelCapabilities: Record<string, Partial<ClientCapabilities>>
   language: 'zh' | 'en'
   timeoutMs: string
   maxImageBytes: string
   maxImagePixels: string
+  maxMediaBytes: string
   concurrency: string
   runtimeMode: 'managed' | 'external'
   toolkitPath: string
@@ -1138,10 +1284,15 @@ function draftOf(value: SettingsValue): Draft {
     userAgent: value.provider?.userAgent ?? DEFAULT_USER_AGENT,
     providerHeaders: { ...(value.provider?.headers ?? {}) },
     providerSessionHeaders: [...(value.provider?.sessionHeaders ?? [])],
+    modelCapabilities: Object.fromEntries(
+      Object.entries(value.provider?.modelCapabilities ?? {})
+        .map(([key, entry]) => [key, { ...entry }]),
+    ),
     language: value.language ?? 'zh',
     timeoutMs: String(value.timeoutMs ?? 30000),
     maxImageBytes: String(value.maxImageBytes ?? 4194304),
     maxImagePixels: String(value.maxImagePixels ?? 20000000),
+    maxMediaBytes: String(value.maxMediaBytes ?? 33554432),
     concurrency: String(value.concurrency ?? 4),
     runtimeMode: value.runtime?.mode ?? 'managed',
     toolkitPath: value.runtime?.agentVisionToolkitPath ?? '',
@@ -1188,11 +1339,13 @@ function valueOf(draft: Draft, t: Translate): SettingsValue {
       userAgent: draft.userAgent.trim(),
       ...(Object.keys(draft.providerHeaders).length === 0 ? {} : { headers: { ...draft.providerHeaders } }),
       ...(draft.providerSessionHeaders.length === 0 ? {} : { sessionHeaders: [...draft.providerSessionHeaders] }),
+      ...(Object.keys(draft.modelCapabilities).length === 0 ? {} : { modelCapabilities: draft.modelCapabilities }),
     },
     language: draft.language,
     timeoutMs: positiveInteger(draft.timeoutMs, t('timeout'), t),
     maxImageBytes: positiveInteger(draft.maxImageBytes, t('maxBytes'), t),
     maxImagePixels: positiveInteger(draft.maxImagePixels, t('maxPixels'), t),
+    maxMediaBytes: positiveInteger(draft.maxMediaBytes, t('maxMediaBytes'), t),
     concurrency: positiveInteger(draft.concurrency, t('concurrency'), t),
     runtime: {
       mode: draft.runtimeMode,
@@ -1413,6 +1566,53 @@ function LoadedSettings({ controller, t }: SettingsInjected) {
     && !snapshot.credential.writable
     && !builtInCredentialChangedProvider
   const canSave = snapshot.writable || (apiKey.length > 0 && !keyLocked)
+  const relayModels = state.models
+  const modelCapabilities = effectiveClientCapabilities(draft.model, draft.modelCapabilities)
+  const relayEntryForDraft = relayModels?.find(entry => entry.id === draft.model.trim())
+  const detectedCapabilities = relayEntryForDraft !== undefined
+    ? relayEntryForDraft.capabilities
+    : modelCapabilities.detected
+  const modelCapabilitySummary = CAPABILITY_MODALITIES
+    .filter(modality => modelCapabilities.effective[modality])
+    .map(modality => t(`cap${modality.charAt(0).toUpperCase()}${modality.slice(1)}` as LocaleKey))
+  const loadModels = (): void => {
+    void controller.listModels({
+      baseUrl: draft.baseUrl.trim(),
+      credential: draft.credential.trim(),
+      protocol: draft.protocol,
+    })
+  }
+  const toggleCapability = (modality: ClientModality, enabled: boolean): void => {
+    setDraft(current => {
+      if (current === undefined) return current
+      const key = current.model.trim().toLowerCase()
+      if (key.length === 0) return current
+      const overrides: Record<string, Partial<ClientCapabilities>> = {
+        ...current.modelCapabilities,
+        [key]: { ...(current.modelCapabilities[key] ?? {}) },
+      }
+      const entry = { ...(overrides[key] ?? {}), [modality]: enabled }
+      // A value equal to the detected default carries no information; drop it
+      // so the stored override map only keeps real deviations.
+      const detected = detectedCapabilities
+      for (const candidate of CAPABILITY_MODALITIES) {
+        if (entry[candidate] === detected[candidate]) delete entry[candidate]
+      }
+      if (Object.keys(entry).length === 0) delete overrides[key]
+      else overrides[key] = entry
+      return { ...current, modelCapabilities: overrides }
+    })
+  }
+  const resetCapabilities = (): void => {
+    setDraft(current => {
+      if (current === undefined) return current
+      const key = current.model.trim().toLowerCase()
+      if (key.length === 0 || current.modelCapabilities[key] === undefined) return current
+      const overrides = { ...current.modelCapabilities }
+      delete overrides[key]
+      return { ...current, modelCapabilities: overrides }
+    })
+  }
   const runtimeErrorTitle = snapshot.runtime.ready ? t('runtimeCandidateRejected') : t('runtimeUnavailable')
   const pluginUpdate = state.update
   const updateCapability = pluginUpdate ?? snapshot.release.update
@@ -1454,8 +1654,48 @@ function LoadedSettings({ controller, t }: SettingsInjected) {
           <Field label={t('protocol')}><select disabled={!snapshot.writable || busy} value={draft.protocol} onChange={(event) => { update('protocol', event.target.value as 'openai' | 'responses' | 'anthropic') }}><option value="openai">OpenAI Chat Completions</option><option value="responses">OpenAI Responses</option><option value="anthropic">Anthropic Messages</option></select></Field>
           {draft.protocol === 'responses' ? <Field label={t('reasoningEffort')} hint={t('reasoningEffortHint')}><Input aria-label={t('reasoningEffort')} disabled={!snapshot.writable || busy} placeholder="none / minimal / low / medium / high / xhigh" value={draft.reasoningEffort} onChange={(event) => { update('reasoningEffort', event.target.value); setDraftError(undefined) }} /></Field> : null}
           <Field label={t('baseUrl')}><Input disabled={!snapshot.writable || busy} value={draft.baseUrl} onChange={(event) => { update('baseUrl', event.target.value) }} /></Field>
-          <Field label={t('model')}><Input disabled={!snapshot.writable || busy} value={draft.model} onChange={(event) => { update('model', event.target.value) }} /></Field>
+          <Field label={t('model')} hint={t('modelHint')}>
+            <div className="dvt-model-row">
+              <Input aria-label={t('model')} disabled={!snapshot.writable || busy} value={draft.model} onChange={(event) => { update('model', event.target.value) }} />
+              <Button size="sm" variant="outline" disabled={busy} onClick={loadModels}>{state.action === 'list-models' ? t('loadingModels') : relayModels === undefined ? t('loadModels') : t('reloadModels')}</Button>
+            </div>
+            {relayModels === undefined ? null : (
+              <select
+                aria-label={t('model')}
+                className="dvt-model-select"
+                disabled={!snapshot.writable || busy}
+                value=""
+                onChange={(event) => { if (event.target.value !== '') update('model', event.target.value) }}
+              >
+                <option value="">{t('pickModelPlaceholder', { count: String(relayModels.length) })}</option>
+                {relayModels.map(entry => (
+                  <option key={entry.id} value={entry.id}>{entry.id} · {CAPABILITY_MODALITIES.filter(modality => entry.capabilities[modality]).join('+') || 'text'}</option>
+                ))}
+              </select>
+            )}
+          </Field>
           <Field label={t('apiKey')} hint={keyLocked ? t('apiKeyLocked') : snapshot.credential.source === undefined ? t('apiKeyHint') : `${t('apiKeyHint')} ${t('sourceHint', { source: t('source'), value: credentialSource(snapshot.credential.source, t) })}`}><Input aria-label={t('apiKey')} type="password" autoComplete="new-password" disabled={busy || keyLocked} placeholder={snapshot.credential.configured ? t('apiKeyPlaceholderConfigured') : t('apiKeyPlaceholderMissing')} value={apiKey} onChange={(event) => { setApiKey(event.target.value); setDraftError(undefined) }} /></Field>
+        </div>
+        <div className="dvt-capabilities" data-overridden={modelCapabilities.overridden || undefined}>
+          <div className="dvt-capabilities-head">
+            <span>{t('capabilities')} <em className="dvt-caps-state">{modelCapabilities.overridden ? t('capabilitiesOverridden') : t('capabilitiesDetected')}</em></span>
+            <small>{modelCapabilitySummary.length === 0 ? t('capabilitiesTextOnly') : t('capabilitiesSummary', { list: modelCapabilitySummary.join(' · ') })}</small>
+          </div>
+          <div className="dvt-capabilities-grid">
+            {CAPABILITY_MODALITIES.map(modality => (
+              <label key={modality} className="dvt-check dvt-cap-check">
+                <input
+                  type="checkbox"
+                  disabled={!snapshot.writable || busy || draft.model.trim().length === 0}
+                  checked={modelCapabilities.effective[modality]}
+                  onChange={(event) => { toggleCapability(modality, event.target.checked) }}
+                />
+                <span>{t(`cap${modality.charAt(0).toUpperCase()}${modality.slice(1)}` as LocaleKey)}</span>
+              </label>
+            ))}
+          </div>
+          <p className="dvt-muted">{t('capabilitiesHint')}</p>
+          {modelCapabilities.overridden ? <button type="button" className="dvt-caps-reset" disabled={!snapshot.writable || busy} onClick={resetCapabilities}>{t('resetCapabilities')}</button> : null}
         </div>
       </section>
 
@@ -1507,6 +1747,7 @@ function LoadedSettings({ controller, t }: SettingsInjected) {
             <Field label={t('timeout')}><Input inputMode="numeric" value={draft.timeoutMs} onChange={(event) => { update('timeoutMs', event.target.value) }} /></Field>
             <Field label={t('maxBytes')}><Input inputMode="numeric" value={draft.maxImageBytes} onChange={(event) => { update('maxImageBytes', event.target.value) }} /></Field>
             <Field label={t('maxPixels')}><Input inputMode="numeric" value={draft.maxImagePixels} onChange={(event) => { update('maxImagePixels', event.target.value) }} /></Field>
+            <Field label={t('maxMediaBytes')}><Input inputMode="numeric" value={draft.maxMediaBytes} onChange={(event) => { update('maxMediaBytes', event.target.value) }} /></Field>
             <Field label={t('concurrency')}><Input inputMode="numeric" value={draft.concurrency} onChange={(event) => { update('concurrency', event.target.value) }} /></Field>
           </div></section>
 
@@ -1544,6 +1785,7 @@ const CSS = `
 .dvt-tutorial-link{margin:0;font-size:12px;line-height:1.5}.dvt-tutorial-link a{color:var(--dsw-alias-state-business-primary);text-decoration:none;font-weight:600}.dvt-tutorial-link a:hover{text-decoration:underline}.dvt-manual-update{display:flex;align-items:center;gap:8px;padding:9px 10px;border-radius:9px;background:var(--dsw-alias-bg-layer-2)}.dvt-manual-update code{flex:1;min-width:0;overflow:auto;white-space:nowrap;font-size:11px;color:var(--dsw-alias-label-primary)}.dvt-settings{display:grid;grid-template-columns:minmax(0,1fr);width:100%;max-width:900px;min-width:0;box-sizing:border-box;gap:14px;padding:8px 2px 32px;color:var(--dsw-alias-label-primary)}.dvt-settings-footer{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;padding:8px 2px}.dvt-settings-footer h2{font-size:25px;letter-spacing:-.025em;margin:3px 0 6px}.dvt-settings-footer p{max-width:620px;margin:0;color:var(--dsw-alias-label-secondary);font-size:13px;line-height:1.55}.dvt-kicker{font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--dsw-alias-state-business-primary);font-weight:700}.dvt-release{display:grid;gap:4px;min-width:170px;padding:9px 11px;border-radius:10px;background:var(--dsw-alias-bg-layer-2);font-size:10px;color:var(--dsw-alias-label-secondary)}.dvt-release span{display:flex;justify-content:space-between;gap:12px}.dvt-release strong{color:var(--dsw-alias-label-primary)}.dvt-alert{padding:10px 12px;border-radius:10px;font-size:12px;line-height:1.5;display:grid;gap:3px}.dvt-alert.notice{background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 10%,transparent);color:var(--dsw-alias-state-business-primary)}.dvt-alert.warning{background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 12%,transparent);color:var(--dsw-alias-state-warn-label)}.dvt-alert.error{background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 10%,transparent);color:var(--dsw-alias-state-error-primary)}.dvt-alert.success{background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 10%,transparent);color:var(--dsw-alias-state-success-primary)}.dvt-panel{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;padding:15px;border:1px solid var(--dsw-alias-border-l1);border-radius:14px;background:var(--dsw-alias-bg-layer-1);box-shadow:var(--dsw-shadow-lv1)}.dvt-panel-title{display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px}.dvt-panel-title>div:first-child{flex:1 1 320px;min-width:0}.dvt-panel-title>.dvt-actions{margin-left:auto;justify-content:flex-end}.dvt-panel-title h3{font-size:14px;margin:0}.dvt-panel-title p{font-size:11px;line-height:1.45;color:var(--dsw-alias-label-secondary);margin:4px 0 0;max-width:620px}.dvt-badge{font-size:10px;padding:3px 7px;border-radius:999px;font-weight:650}.dvt-badge.ok{background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 12%,transparent);color:var(--dsw-alias-state-success-primary)}.dvt-badge.warning{background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 12%,transparent);color:var(--dsw-alias-state-warn-label)}.dvt-badge.error{background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 10%,transparent);color:var(--dsw-alias-state-error-primary)}.dvt-form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.dvt-field{display:grid;min-width:0;gap:6px;align-content:start}.dvt-field>span{font-size:11px;font-weight:600}.dvt-field>small{font-size:10px;color:var(--dsw-alias-label-secondary);line-height:1.4}.dvt-field select,.dvt-field textarea{width:100%;box-sizing:border-box;border:1px solid var(--dsw-alias-border-l1);border-radius:9px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;padding:8px 10px}.dvt-field select{height:36px}.dvt-field textarea{resize:vertical;min-height:76px}.dvt-check{display:grid;gap:6px;cursor:pointer}.dvt-check input{width:auto}.dvt-check>span{font-size:12px;font-weight:600}.dvt-check>small{font-size:10px;color:var(--dsw-alias-label-secondary);line-height:1.4}.dvt-runtime-facts{display:grid;gap:4px;padding:9px 10px;border-radius:9px;background:var(--dsw-alias-bg-layer-2);overflow:auto}.dvt-runtime-facts code{font-size:10px;white-space:nowrap;color:var(--dsw-alias-label-secondary)}.dvt-save-row{display:flex;gap:8px;padding:2px 0}.dvt-update-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.dvt-update-grid>div{display:grid;gap:3px;padding:9px 10px;border-radius:9px;background:var(--dsw-alias-bg-layer-2)}.dvt-update-grid span{font-size:9px;text-transform:uppercase;letter-spacing:.04em;color:var(--dsw-alias-label-caption)}.dvt-update-grid strong{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dvt-settings-footer{margin-top:8px;padding:20px 2px 4px;border-top:1px solid var(--dsw-alias-border-l1);opacity:.82}.dvt-settings-footer h2{font-size:18px;letter-spacing:-.015em;margin:3px 0 5px}.dvt-settings-footer p{font-size:11px;line-height:1.5}.dvt-release{min-width:220px}.dvt-release span{white-space:nowrap}.dvt-essential{border-color:color-mix(in srgb,var(--dsw-alias-state-business-primary) 30%,var(--dsw-alias-border-l1));box-shadow:var(--dsw-shadow-lv1),0 0 0 3px color-mix(in srgb,var(--dsw-alias-state-business-primary) 5%,transparent)}.dvt-advanced{border:1px solid var(--dsw-alias-border-l1);border-radius:14px;background:var(--dsw-alias-bg-layer-1);overflow:hidden}.dvt-advanced>summary{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 15px;cursor:pointer;list-style:none}.dvt-advanced>summary::-webkit-details-marker{display:none}.dvt-advanced>summary>span:first-child{display:grid;gap:3px}.dvt-advanced>summary strong{font-size:13px}.dvt-advanced>summary small{font-size:10px;line-height:1.45;color:var(--dsw-alias-label-secondary);font-weight:400}.dvt-details-chevron{font-size:15px;opacity:.55;transition:transform .16s ease}.dvt-advanced[open] .dvt-details-chevron{transform:rotate(180deg)}.dvt-advanced-body{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;padding:0 12px 12px}.dvt-advanced-body>.dvt-panel{box-shadow:none}
 .dvt-health-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px}.dvt-health-grid>div{padding:9px 10px;border-radius:9px;background:var(--dsw-alias-bg-layer-2);border-left:3px solid var(--dsw-alias-border-l4)}.dvt-health-grid>div[data-status=ok]{border-left-color:var(--dsw-alias-state-success-primary)}.dvt-health-grid>div[data-status=warning],.dvt-health-grid>div[data-status=not_tested]{border-left-color:var(--dsw-alias-state-warn-primary)}.dvt-health-grid>div[data-status=error]{border-left-color:var(--dsw-alias-state-error-primary)}.dvt-health-grid span{font-size:10px;text-transform:capitalize}.dvt-health-grid strong{float:right;font-size:9px;text-transform:uppercase;color:var(--dsw-alias-label-secondary)}.dvt-health-test-tag{display:inline-flex;margin-left:6px;padding:1px 6px;border-radius:999px;background:var(--dsw-alias-bg-layer-1);font-size:9px;font-style:normal;font-weight:600;color:var(--dsw-alias-label-secondary)}.dvt-health-test-tag[data-status=ok]{background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 12%,transparent);color:var(--dsw-alias-state-success-primary)}.dvt-health-test-tag[data-status=warning]{background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 12%,transparent);color:var(--dsw-alias-state-warn-label)}.dvt-health-test-tag[data-status=error]{background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 12%,transparent);color:var(--dsw-alias-state-error-primary)}.dvt-health-grid p{clear:both;margin:5px 0 0;font-size:10px;line-height:1.4;color:var(--dsw-alias-label-secondary)}.dvt-loading{padding:24px;border-radius:12px;background:var(--dsw-alias-bg-layer-2);font-size:12px;color:var(--dsw-alias-label-secondary)}
+.dvt-model-row{display:flex;gap:7px;align-items:stretch}.dvt-model-row input{flex:1;min-width:0}.dvt-model-select{width:100%;margin-top:7px;font-size:12px;padding:7px 9px;border-radius:9px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}.dvt-capabilities{margin-top:11px;padding:10px 11px;border-radius:10px;background:var(--dsw-alias-bg-layer-2);display:grid;gap:8px}.dvt-capabilities[data-overridden=true]{border:1px solid color-mix(in srgb,var(--dsw-alias-state-business-primary) 35%,transparent)}.dvt-capabilities-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px}.dvt-capabilities-head span{font-size:12px;font-weight:650}.dvt-capabilities-head small{font-size:10px;color:var(--dsw-alias-label-secondary);text-align:right}.dvt-caps-state{margin-left:6px;font-size:9px;font-style:normal;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--dsw-alias-label-caption)}.dvt-capabilities[data-overridden=true] .dvt-caps-state{color:var(--dsw-alias-state-business-primary)}.dvt-capabilities-grid{display:flex;flex-wrap:wrap;gap:6px 14px}.dvt-cap-check{display:inline-flex;align-items:center;gap:6px;font-size:12px;cursor:pointer}.dvt-caps-reset{justify-self:start;border:0;background:transparent;padding:0;color:var(--dsw-alias-state-business-primary);font:inherit;font-size:11px;font-weight:600;cursor:pointer;text-decoration:underline}
 .dvt-paste-dock{box-sizing:border-box;width:calc(100% - 32px);max-width:var(--dsh-composer-card-max-width,960px);margin:0 auto;display:flex;flex-wrap:wrap;gap:6px;padding:0 2px 6px}.dvt-paste-chip{max-width:100%;height:32px;box-sizing:border-box;display:flex;align-items:center;gap:7px;padding:0 6px 0 10px;border:1px solid var(--dsw-alias-border-l1);border-radius:9px;background:var(--dsw-specific-tip);font-size:12px}.dvt-paste-chip[data-status=copying]{border-color:var(--dsw-alias-state-business-primary)}.dvt-paste-chip[data-status=error]{border-color:var(--dsw-alias-state-error-primary)}.dvt-paste-name{max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dvt-paste-detail{color:var(--dsw-alias-label-caption);max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dvt-paste-chip[data-status=error] .dvt-paste-detail{color:var(--dsw-alias-state-error-primary)}.dvt-paste-chip button{width:20px;height:20px;display:grid;place-items:center;border:0;border-radius:50%;padding:0;background:transparent;color:var(--dsw-alias-label-caption);font:inherit;font-size:16px;cursor:pointer}.dvt-paste-chip button:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}.dvt-paste-chip button:disabled{opacity:.4;cursor:default}
 @media(max-width:720px){.dvt-settings-footer{display:grid}.dvt-release{width:auto}.dvt-form-grid,.dvt-update-grid{grid-template-columns:1fr}.dvt-metrics{grid-template-columns:1fr}.dvt-artifact-meta{align-items:flex-start;flex-direction:column}.dvt-panel-title{flex-direction:column}}
 `

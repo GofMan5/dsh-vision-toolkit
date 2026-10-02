@@ -41,6 +41,8 @@ export interface UpstreamEnvironment {
   VISION_API_PROTOCOL: 'chat_completions' | 'responses' | 'anthropic'
   VISION_REASONING_EFFORT?: string
   VISION_ANTHROPIC_THINKING: 'omit' | 'disabled' | 'adaptive'
+  /** Comma-separated input modalities the configured model accepts; empty = none. */
+  VISION_MODALITIES?: string
   VISION_SSL_VERIFY?: string
   VISION_USER_AGENT: string
   LANG: 'zh' | 'en'
@@ -814,6 +816,9 @@ export class UpstreamAdapter {
             ? {}
             : { VISION_REASONING_EFFORT: options.env.VISION_REASONING_EFFORT }),
           VISION_ANTHROPIC_THINKING: options.env.VISION_ANTHROPIC_THINKING,
+          ...(options.env.VISION_MODALITIES === undefined
+            ? {}
+            : { VISION_MODALITIES: options.env.VISION_MODALITIES }),
           ...(options.env.VISION_SSL_VERIFY === undefined
             ? {}
             : { VISION_SSL_VERIFY: options.env.VISION_SSL_VERIFY }),

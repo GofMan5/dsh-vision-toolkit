@@ -33,6 +33,22 @@ declare const en: {
     readonly credential: "Credential name";
     readonly credentialHint: "The built-in free provider needs no user key. For a custom provider, this is the DSH credential reference used to store its key.";
     readonly model: "Model";
+    readonly modelHint: "Type a model id, or load the catalog from the relay and pick one.";
+    readonly loadModels: "Load models";
+    readonly loadingModels: "Loading…";
+    readonly pickModelPlaceholder: "{count} models from the relay — pick one";
+    readonly reloadModels: "Reload list";
+    readonly capabilities: "Model capabilities";
+    readonly capabilitiesHint: "What the selected model accepts as vision input (vision_glance and pasted images route through it). Detected defaults are pre-filled; toggling saves an override for this exact model.";
+    readonly capImage: "Images";
+    readonly capVideo: "Video";
+    readonly capAudio: "Audio";
+    readonly capDocument: "Documents";
+    readonly capabilitiesTextOnly: "Text only";
+    readonly capabilitiesDetected: "detected";
+    readonly capabilitiesOverridden: "overridden";
+    readonly resetCapabilities: "Reset to detected";
+    readonly capabilitiesSummary: "Accepts: {list}";
     readonly protocol: "API protocol";
     readonly reasoningEffort: "Vision service reasoning effort";
     readonly reasoningEffortHint: "Optional. Common values: none, minimal, low, medium, high, xhigh. Supported values and billing depend on the model or proxy; higher effort may increase tokens, latency, and cost. Requests send store:false, but you should still verify the provider's data-retention policy.";
@@ -45,6 +61,7 @@ declare const en: {
     readonly timeout: "Request timeout (ms)";
     readonly maxBytes: "Maximum image bytes";
     readonly maxPixels: "Maximum image pixels";
+    readonly maxMediaBytes: "Maximum media file bytes (video/audio/document)";
     readonly concurrency: "Concurrent calls per session";
     readonly runtime: "Runtime";
     readonly runtimeMode: "Runtime mode";
@@ -250,11 +267,13 @@ interface SettingsValue {
         userAgent?: string;
         headers?: Record<string, string>;
         sessionHeaders?: string[];
+        modelCapabilities?: Record<string, Partial<ClientCapabilities>>;
     };
     language?: 'zh' | 'en';
     timeoutMs?: number;
     maxImageBytes?: number;
     maxImagePixels?: number;
+    maxMediaBytes?: number;
     concurrency?: number;
     runtime?: {
         mode?: 'managed' | 'external';
@@ -270,6 +289,18 @@ interface SettingsValue {
         autoSwitch?: boolean;
         hidden?: boolean;
     };
+}
+/** Effective per-model input capabilities. Text is always assumed. */
+interface ClientCapabilities {
+    image: boolean;
+    video: boolean;
+    audio: boolean;
+    document: boolean;
+}
+/** One relay catalog entry from the list-models action. */
+interface RelayModelEntry {
+    id: string;
+    capabilities: ClientCapabilities;
 }
 type PluginUpdateUnavailableReason = 'profile-not-found' | 'not-direct-dependency' | 'unsupported-install-source' | 'profile-read-only' | 'pnpm-unavailable' | 'unsupported-platform' | 'restart-unmanaged' | 'restart-address-unavailable';
 interface PluginUpdateCapability {
@@ -314,6 +345,12 @@ interface SettingsSnapshot {
         source?: string;
         writable: boolean;
     };
+    capabilities: {
+        model: string;
+        effective: ClientCapabilities;
+        detected: ClientCapabilities;
+        overridden: boolean;
+    };
     runtime: {
         ready: boolean;
         generation: number;
@@ -344,7 +381,8 @@ interface SettingsState {
     health?: HealthResult | undefined;
     update?: PluginUpdateCheck | undefined;
     restart?: PluginUpdateResult | undefined;
-    action?: 'save' | 'health' | 'connection' | 'model' | 'check-update' | 'apply-update' | undefined;
+    models?: RelayModelEntry[] | undefined;
+    action?: 'save' | 'health' | 'connection' | 'model' | 'list-models' | 'check-update' | 'apply-update' | undefined;
     message?: string | undefined;
     error?: string | undefined;
 }
@@ -360,6 +398,16 @@ export declare class VisionSettingsController {
     refreshIfLoaded(): void;
     save(value: SettingsValue, expectedRevision: number, credentialValue: string | undefined, writeSettings: boolean): Promise<boolean>;
     runHealth(mode: 'health' | 'connection' | 'model'): Promise<void>;
+    /**
+     * Load the model catalog from the relay. The in-progress provider draft
+     * (baseUrl, credential, protocol) rides along so the picker works before
+     * the first save; the backend resolves the credential itself.
+     */
+    listModels(provider: {
+        baseUrl: string;
+        credential: string;
+        protocol: 'openai' | 'responses' | 'anthropic';
+    }): Promise<void>;
     checkUpdate(): Promise<void>;
     applyUpdate(expectedVersion: string): Promise<void>;
     reportRestartTimeout(message: string): void;

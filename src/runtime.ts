@@ -19,6 +19,13 @@ import { BUILT_IN_FREE_VISION_KEY } from './defaults.ts'
 import { evidenceRuntimeFingerprint } from './evidence-cache.ts'
 import { VisionToolkitError } from './errors.ts'
 import {
+  MEDIA_EXTENSION_KINDS,
+  MEDIA_TYPE_BY_EXTENSION,
+  resolveModelCapabilities,
+  visionModalitiesEnvValue,
+  type VisionModality as VisionModalityLocal,
+} from './model-capabilities.ts'
+import {
   assertDistinctOutput,
   commitStagedDirectory,
   commitStagedOutput,
@@ -227,6 +234,18 @@ export interface ImageInfo {
   originalPath: string
 }
 
+/** Validated non-image media metadata (video, audio, document) in glance results. */
+export interface MediaInfo {
+  path: string
+  bytes: number
+  /** Which non-image modality this input carries. */
+  kind: 'video' | 'audio' | 'document'
+  /** Media type implied by the file extension. */
+  mediaType: string
+  /** Original user-facing path (media files are never transformed). */
+  originalPath: string
+}
+
 /** Structured input for one glance call. */
 export interface GlanceRequest {
   images: string[]
@@ -238,6 +257,8 @@ export interface GlanceRequest {
 /** Structured glance result. */
 export interface GlanceResult {
   images: ImageInfo[]
+  /** Non-image inputs analyzed in the same call, when the model accepts them. */
+  media?: MediaInfo[]
   mode: 'describe' | 'qa' | 'ocr'
   answer: string
   truncated: boolean
@@ -908,6 +929,12 @@ export class VisionToolkitRuntime {
         ? { VISION_REASONING_EFFORT: this.config.provider.reasoningEffort }
         : {}),
       VISION_ANTHROPIC_THINKING: this.config.provider.anthropicThinking,
+      // Declare what the configured model accepts so the Python client gates
+      // media kinds the same way the TypeScript runtime does.
+      VISION_MODALITIES: visionModalitiesEnvValue(resolveModelCapabilities(
+        this.config.provider.model,
+        this.config.provider.modelCapabilities,
+      )),
       ...(sslVerify === undefined ? {} : { VISION_SSL_VERIFY: sslVerify }),
       VISION_USER_AGENT: this.config.provider.userAgent,
       LANG: this.config.language,
@@ -1152,6 +1179,51 @@ export class VisionToolkitRuntime {
     return this.autoCompressImage(image, policy, operation)
   }
 
+  /**
+   * Validate one non-image media file (video, audio, document) for glance.
+   * Unlike images there is nothing to decode or compress: the model receives
+   * the verbatim bytes, bounded by `maxMediaBytes`.
+   */
+  private async validateMediaFile(
+    raw: string,
+    kind: Exclude<VisionModalityLocal, 'image'>,
+    policy: PathPolicy,
+  ): Promise<MediaInfo> {
+    const file = await resolveInputFile(raw, policy)
+    const extension = extname(file.path).toLowerCase()
+    const mediaType = MEDIA_TYPE_BY_EXTENSION[extension]
+    if (mediaType === undefined || MEDIA_EXTENSION_KINDS[extension] !== kind) {
+      throw new VisionToolkitError('input', `unsupported ${kind} file extension: ${extension}`)
+    }
+    if (file.bytes > this.config.maxMediaBytes) {
+      throw new VisionToolkitError(
+        'input',
+        `${kind} exceeds the ${this.config.maxMediaBytes}-byte limit: ${file.bytes} bytes`,
+      )
+    }
+    return { path: file.path, bytes: file.bytes, kind, mediaType, originalPath: file.path }
+  }
+
+  /**
+   * Whether the configured model accepts one input modality. Checked before
+   * any bytes move so a model switch degrades into an actionable error
+   * instead of an opaque provider rejection.
+   */
+  private modelAccepts(modality: VisionModalityLocal): boolean {
+    const capabilities = resolveModelCapabilities(
+      this.config.provider.model,
+      this.config.provider.modelCapabilities,
+    )
+    return capabilities[modality]
+  }
+
+  private modalityRejection(modality: VisionModalityLocal): VisionToolkitError {
+    return new VisionToolkitError(
+      'input',
+      `the configured model "${this.config.provider.model}" does not accept ${modality} input; adjust the model capabilities in Vision Toolkit Settings or pick a multimodal model from the relay`,
+    )
+  }
+
   private accountImage(image: ImageInfo, operation: OperationContext): void {
     operation.metrics.imageCount += 1
     operation.metrics.imageBytes += image.bytes
@@ -1161,6 +1233,7 @@ export class VisionToolkitRuntime {
   private async glanceCacheKey(
     request: GlanceRequest,
     images: readonly ImageInfo[],
+    media: readonly MediaInfo[],
     env: UpstreamEnvironment,
     signal: AbortSignal,
   ): Promise<string> {
@@ -1179,8 +1252,25 @@ export class VisionToolkitRuntime {
         sha256: createHash('sha256').update(bytes).digest('hex'),
       }
     }))
+    const mediaFingerprints = await Promise.all(media.map(async (file) => {
+      let bytes: Buffer
+      try {
+        bytes = await readFile(file.path, { signal })
+      } catch (error) {
+        throw new VisionToolkitError('input', `media file changed while preparing the vision request: ${file.path}`, { cause: error })
+      }
+      if (bytes.length !== file.bytes) {
+        throw new VisionToolkitError('input', `media file changed while preparing the vision request: ${file.path}`)
+      }
+      return {
+        path: file.path,
+        kind: file.kind,
+        sha256: createHash('sha256').update(bytes).digest('hex'),
+      }
+    }))
     return JSON.stringify({
       images: imageFingerprints,
+      media: mediaFingerprints,
       query: request.query ?? null,
       ocr: request.ocr === true,
       region: request.region ?? null,
@@ -1190,6 +1280,7 @@ export class VisionToolkitRuntime {
         protocol: env.VISION_API_PROTOCOL,
         reasoningEffort: env.VISION_REASONING_EFFORT ?? null,
         anthropicThinking: env.VISION_ANTHROPIC_THINKING,
+        modalities: env.VISION_MODALITIES ?? null,
         sslVerify: env.VISION_SSL_VERIFY ?? null,
         userAgent: env.VISION_USER_AGENT,
         language: env.LANG,
@@ -1293,7 +1384,7 @@ export class VisionToolkitRuntime {
     capturedEnv?: UpstreamEnvironment,
   ): Promise<GlanceResult> {
     return this.runOperation('vision_glance', options, async (operation) => {
-      if (request.images.length === 0) throw new VisionToolkitError('input', 'glance requires at least one image')
+      if (request.images.length === 0) throw new VisionToolkitError('input', 'glance requires at least one input')
       if (request.query !== undefined && request.ocr === true) {
         throw new VisionToolkitError('input', 'glance: query and ocr are mutually exclusive')
       }
@@ -1303,21 +1394,44 @@ export class VisionToolkitRuntime {
       if (request.region !== undefined) parseRegion(request.region)
       const policy = await this.pathPolicy(options.workspace)
       const images: ImageInfo[] = []
+      const media: MediaInfo[] = []
       const seen = new Set<string>()
       for (const raw of request.images) {
-        const image = await this.validateImage(raw, policy, operation)
-        if (seen.has(image.path)) {
+        const extension = extname(raw).toLowerCase()
+        const mediaKind = MEDIA_EXTENSION_KINDS[extension]
+        if (mediaKind === undefined) {
+          if (!this.modelAccepts('image')) throw this.modalityRejection('image')
+          const image = await this.validateImage(raw, policy, operation)
+          if (seen.has(image.path)) {
+            operation.metrics.cacheHits += 1
+            continue
+          }
+          seen.add(image.path)
+          this.accountImage(image, operation)
+          images.push(image)
+          continue
+        }
+        if (request.region !== undefined) {
+          throw new VisionToolkitError('input', 'glance: region works with images only')
+        }
+        if (!this.modelAccepts(mediaKind)) throw this.modalityRejection(mediaKind)
+        const file = await this.validateMediaFile(raw, mediaKind, policy)
+        if (seen.has(file.path)) {
           operation.metrics.cacheHits += 1
           continue
         }
-        seen.add(image.path)
-        this.accountImage(image, operation)
-        images.push(image)
+        seen.add(file.path)
+        operation.metrics.imageCount += 1
+        operation.metrics.imageBytes += file.bytes
+        media.push(file)
+      }
+      if (images.length === 0 && media.length === 0) {
+        throw new VisionToolkitError('input', 'glance requires at least one input')
       }
       const env = capturedEnv ?? await this.resolveVisionEnv()
       const cacheKey = options.sessionScope === undefined
         ? undefined
-        : await this.glanceCacheKey(request, images, env, operation.signal)
+        : await this.glanceCacheKey(request, images, media, env, operation.signal)
       if (options.sessionScope !== undefined && cacheKey !== undefined) {
         const cached = this.glanceCache.get(options.sessionScope)
         if (cached?.key === cacheKey) {
@@ -1327,6 +1441,7 @@ export class VisionToolkitRuntime {
       }
       const result = await this.runUpstream('glance', [
         ...images.map(image => image.path),
+        ...media.map(file => file.path),
         ...(request.region !== undefined ? ['--region', request.region] : []),
         ...(request.ocr === true ? ['--ocr'] : []),
         ...(request.query !== undefined ? ['-q', request.query] : []),
@@ -1335,6 +1450,7 @@ export class VisionToolkitRuntime {
       if (answer.length === 0) throw new VisionToolkitError('output', 'glance: vision API returned an empty description')
       const value: GlanceResult = {
         images,
+        ...(media.length === 0 ? {} : { media }),
         mode: request.ocr === true ? 'ocr' : request.query !== undefined ? 'qa' : 'describe',
         answer,
         truncated: false,

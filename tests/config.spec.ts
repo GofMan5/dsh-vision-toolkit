@@ -28,6 +28,8 @@ describe('resolveConfig', () => {
     expect(config.timeoutMs).toBe(30000)
     expect(config.maxImageBytes).toBe(4194304)
     expect(config.maxImagePixels).toBe(20000000)
+    expect(config.maxMediaBytes).toBe(33554432)
+    expect(config.provider.modelCapabilities).toEqual({})
     expect(isBuiltInFreeVisionProvider(config.provider)).toBe(true)
     expect(config.concurrency).toBe(4)
     expect(config.runtime.mode).toBe('managed')
@@ -263,7 +265,31 @@ describe('resolveConfig', () => {
     expect(() => resolveConfig({ timeoutMs: 500 })).toThrowError(/timeoutMs/)
     expect(() => resolveConfig({ maxImageBytes: 1 })).toThrowError(/maxImageBytes/)
     expect(() => resolveConfig({ maxImagePixels: 0 })).toThrowError(/maxImagePixels/)
+    expect(() => resolveConfig({ maxMediaBytes: 12 })).toThrowError(/maxMediaBytes/)
+    expect(() => resolveConfig({ maxMediaBytes: 268435457 })).toThrowError(/maxMediaBytes/)
     expect(() => resolveConfig({ concurrency: 0 })).toThrowError(/concurrency/)
+  })
+
+  it('normalizes per-model capability overrides', () => {
+    const config = resolveConfig({
+      provider: {
+        modelCapabilities: {
+          '  Qwen3.8-Max-0902 ': { audio: false, video: true },
+          'glm-5.3': { image: true },
+        },
+      },
+    })
+    expect(config.provider.modelCapabilities).toEqual({
+      'qwen3.8-max-0902': { audio: false, video: true },
+      'glm-5.3': { image: true },
+    })
+  })
+
+  it('rejects invalid model capability entries', () => {
+    expect(() => resolveConfig({ provider: { modelCapabilities: { 'glm-5.3': 'image' as unknown } } }))
+      .toThrowError(/modelCapabilities.*glm-5\.3/u)
+    expect(() => resolveConfig({ provider: { modelCapabilities: { '': { image: true } } } }))
+      .toThrowError(/modelCapabilities/u)
   })
 
   it('accepts managed runtime without a local checkout path', () => {

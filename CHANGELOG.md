@@ -4,6 +4,27 @@ All notable user-facing changes to DSH Vision Toolkit are documented in this fil
 
 ## [Unreleased]
 
+## [0.2.0] - fork
+
+This release marks the fork's first feature set on top of upstream 0.1.46: the vision model becomes a relay-backed, capability-aware choice.
+
+### Added
+
+- **Relay model picker.** Settings → Vision service gained a *Load models* action: the plugin queries `GET {baseUrl}/models` with the configured credential (OpenAI- and Anthropic-shaped responses are both parsed, capped and de-duplicated) and offers the catalog as a dropdown next to the model field. The picker uses the in-progress form values, so it works before the first save; each entry is annotated with its detected modalities.
+- **Per-model capability matrix.** `provider.modelCapabilities` stores explicit per-model overrides of which inputs the vision model accepts — image, video, audio, and document (PDF/DOCX/XLSX/PPTX). Heuristic name-based defaults prefill the matrix (Qwen-Max 0902+ and omni models default to full multimodal; `*-vl`/vision families to image+video; Claude to image+PDF; Gemini to everything; image-generation models to none). Toggles that match the detected default are dropped again, so the stored map only carries real deviations; a *Reset to detected* control restores the heuristic for one model.
+- **Multimodal glance.** `vision_glance` now accepts video (`.mp4/.webm/.mkv/.mov/.avi/.m4v/.3gp`), audio (`.mp3/.wav/.m4a/.aac/.ogg/.opus/.flac`), and document (`.pdf/.docx/.xlsx/.pptx/.doc/.xls/.ppt`) paths beside images, subject to the selected model's capabilities. Inputs are routed to protocol-appropriate content parts — `video_url`, `input_audio`, and the DashScope-style `file` part for Chat Completions, `input_file` for Responses, PDF `document` blocks for Anthropic — and non-image inputs appear in the tool result as a `media` array (kind + media type + bytes).
+- **Capability gating with actionable errors.** When the configured model does not accept an input modality, glance fails before any bytes move — in the TypeScript runtime and again in the Python client via the new `VISION_MODALITIES` environment variable — with a message that points at the Settings capability matrix instead of surfacing an opaque provider rejection. A model switch therefore degrades predictably: the same `vision_glance` call works on a fully multimodal Qwen and refuses loudly on a text-only model.
+- `maxMediaBytes` (default 32 MiB, max 256 MiB) bounds non-image inputs; it is configurable in Settings → Limits.
+
+### Changed
+
+- The health-check *Test vision model* still sends the bundled diagnostic image, and its failure detail now explains modality rejections the same way glance does.
+
+### Compatibility
+
+- The vendored `agent-vision-toolkit` snapshot carries the fork's multimodal content-part changes; `UPSTREAM_MANIFEST.json` was regenerated accordingly. External runtime mode therefore requires an exact export of this fork's vendor directory (the clean upstream checkout no longer matches the manifest). Managed mode — the default — is unaffected.
+- Chat-side image handling (paste takeover, image-input variants, transparent routing) is unchanged; DSH's host modality vocabulary remains text+image, so video/audio/document attachments continue to reach agents as workspace file handles that `vision_glance` can analyze.
+
 ## [0.1.46] - 2026-10-01
 
 ### Compatibility

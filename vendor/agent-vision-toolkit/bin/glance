@@ -10,8 +10,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from vision_client import (  # noqa: E402
     VisionError,
     describe_image,
-    image_path_to_data_url,
     load_default_env,
+    media_path_to_data_url,
 )
 
 
@@ -62,12 +62,12 @@ def build_prompt(args, count):
 def main():
     parser = argparse.ArgumentParser(
         prog="glance",
-        description="Describe, answer questions about, or OCR an image with the configured vision model",
+        description="Describe, answer questions about, or OCR an image, video, audio, or document with the configured vision model",
     )
-    parser.add_argument("images", nargs="+", metavar="image",
-                        help="path(s) to the image(s); pass several to compare them in one call")
+    parser.add_argument("images", nargs="+", metavar="input",
+                        help="path(s) to image/video/audio/document file(s); pass several to compare them in one call")
     group = parser.add_mutually_exclusive_group()
-    group.add_argument("-q", "--query", help="ask a question about the image(s)")
+    group.add_argument("-q", "--query", help="ask a question about the input(s)")
     group.add_argument("--ocr", nargs="?", const="", metavar="EXTRA", help="transcribe all visible text verbatim")
     parser.add_argument("--region", metavar="X1,Y1,X2,Y2",
                         help="crop to this pixel box (e.g. from ground) and send only the crop")
@@ -77,7 +77,7 @@ def main():
         if args.region and len(args.images) > 1:
             raise VisionError("--region works with exactly one image")
         urls = ([region_data_url(args.images[0], args.region)] if args.region
-                else [image_path_to_data_url(path) for path in args.images])
+                else [media_path_to_data_url(path) for path in args.images])
         answer = describe_image(
             urls,
             build_prompt(args, len(urls)),

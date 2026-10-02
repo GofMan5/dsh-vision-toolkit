@@ -48,6 +48,17 @@ export interface ImageInfo {
     /** Original user-facing image path before any automatic compression. */
     originalPath: string;
 }
+/** Validated non-image media metadata (video, audio, document) in glance results. */
+export interface MediaInfo {
+    path: string;
+    bytes: number;
+    /** Which non-image modality this input carries. */
+    kind: 'video' | 'audio' | 'document';
+    /** Media type implied by the file extension. */
+    mediaType: string;
+    /** Original user-facing path (media files are never transformed). */
+    originalPath: string;
+}
 /** Structured input for one glance call. */
 export interface GlanceRequest {
     images: string[];
@@ -58,6 +69,8 @@ export interface GlanceRequest {
 /** Structured glance result. */
 export interface GlanceResult {
     images: ImageInfo[];
+    /** Non-image inputs analyzed in the same call, when the model accepts them. */
+    media?: MediaInfo[];
     mode: 'describe' | 'qa' | 'ocr';
     answer: string;
     truncated: boolean;
@@ -380,6 +393,19 @@ export declare class VisionToolkitRuntime {
     private pruneCompressedCache;
     private autoCompressImage;
     private validateImage;
+    /**
+     * Validate one non-image media file (video, audio, document) for glance.
+     * Unlike images there is nothing to decode or compress: the model receives
+     * the verbatim bytes, bounded by `maxMediaBytes`.
+     */
+    private validateMediaFile;
+    /**
+     * Whether the configured model accepts one input modality. Checked before
+     * any bytes move so a model switch degrades into an actionable error
+     * instead of an opaque provider rejection.
+     */
+    private modelAccepts;
+    private modalityRejection;
     private accountImage;
     private glanceCacheKey;
     private runUpstream;

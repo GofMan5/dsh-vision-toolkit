@@ -28,6 +28,15 @@ import {
   type ResolvedVisionToolkitConfig,
   type VisionToolkitConfig,
 } from './config.ts'
+import {
+  detectModelCapabilities,
+  overridesChangeBehavior,
+  resolveModelCapabilities,
+  type ModelCapabilities,
+} from './model-capabilities.ts'
+import { fetchRelayModels, type RelayModelCatalog } from './relay-models.ts'
+import { BUILT_IN_FREE_VISION_KEY } from './defaults.ts'
+import { visionProviderHeaders } from './runtime.ts'
 import type { VisionToolkitHealthResult } from './runtime.ts'
 import {
   PluginUpdateError,
@@ -50,6 +59,18 @@ export const SETTINGS_ROUTE = '/_dsh/vision-toolkit/settings'
 /** Same-origin route used by the browser client to read display-mode flags. */
 export const DISPLAY_CONFIG_ROUTE = '/_dsh/vision-toolkit/display-config'
 
+/** Effective model capability facts for the configured vision model. */
+export interface VisionToolkitCapabilitySnapshot {
+  /** The model these facts describe. */
+  model: string
+  /** Effective capabilities after the user's per-model overrides. */
+  effective: ModelCapabilities
+  /** Heuristic defaults for the model id. */
+  detected: ModelCapabilities
+  /** Whether an override entry changes the detected default. */
+  overridden: boolean
+}
+
 /** Public Settings snapshot; credential values are deliberately impossible here. */
 export interface VisionToolkitSettingsSnapshot {
   schemaVersion: 1
@@ -67,6 +88,7 @@ export interface VisionToolkitSettingsSnapshot {
     source?: string
     writable: boolean
   }
+  capabilities: VisionToolkitCapabilitySnapshot
   runtime: RuntimeManagerStatus
   release: {
     pluginVersion: string
@@ -101,12 +123,26 @@ interface CheckUpdateRequest {
   action: 'check-update'
 }
 
+interface ListModelsRequest {
+  action: 'list-models'
+  /**
+   * Optional in-progress provider draft from the Settings form so the picker
+   * works before the first save. Falls back to the stored configuration.
+   */
+  provider?: {
+    baseUrl?: string
+    credential?: string
+    protocol?: 'openai' | 'responses' | 'anthropic'
+    userAgent?: string
+  }
+}
+
 interface ApplyUpdateRequest {
   action: 'apply-update'
   expectedVersion: string
 }
 
-type SettingsRequest = SaveRequest | HealthRequest | CredentialRequest | CheckUpdateRequest | ApplyUpdateRequest
+type SettingsRequest = SaveRequest | HealthRequest | CredentialRequest | CheckUpdateRequest | ListModelsRequest | ApplyUpdateRequest
 
 interface JsonError {
   ok: false
@@ -225,6 +261,28 @@ function parseRequest(value: unknown): SettingsRequest {
     }
   }
   if (value.action === 'check-update') return { action: 'check-update' }
+  if (value.action === 'list-models') {
+    if (value.provider === undefined) return { action: 'list-models' }
+    if (!isRecord(value.provider)) throw new TypeError('list-models.provider must be an object')
+    const draft = value.provider
+    if (draft.baseUrl !== undefined && typeof draft.baseUrl !== 'string') {
+      throw new TypeError('list-models.provider.baseUrl must be a string')
+    }
+    if (draft.credential !== undefined && typeof draft.credential !== 'string') {
+      throw new TypeError('list-models.provider.credential must be a string')
+    }
+    if (draft.protocol !== undefined
+      && (typeof draft.protocol !== 'string' || !['openai', 'responses', 'anthropic'].includes(draft.protocol))) {
+      throw new TypeError('list-models.provider.protocol must be "openai", "responses", or "anthropic"')
+    }
+    if (draft.userAgent !== undefined && typeof draft.userAgent !== 'string') {
+      throw new TypeError('list-models.provider.userAgent must be a string')
+    }
+    return {
+      action: 'list-models',
+      ...(Object.keys(draft).length === 0 ? {} : { provider: draft as NonNullable<ListModelsRequest['provider']> }),
+    }
+  }
   if (value.action === 'apply-update') {
     if (typeof value.expectedVersion !== 'string' || value.expectedVersion.trim().length === 0) {
       throw new TypeError('apply-update.expectedVersion must be a non-empty string')
@@ -267,6 +325,18 @@ export class VisionToolkitWebBackend {
     return this.ctx.credentials.describe(credentialRef(String(config.provider.credential)))
   }
 
+  /** Model capability facts for one resolved configuration. */
+  private capabilityFacts(resolved: ResolvedVisionToolkitConfig): VisionToolkitCapabilitySnapshot {
+    const model = resolved.provider.model
+    const entry = resolved.provider.modelCapabilities[model.trim().toLowerCase()]
+    return {
+      model,
+      effective: resolveModelCapabilities(model, resolved.provider.modelCapabilities),
+      detected: detectModelCapabilities(model),
+      overridden: entry !== undefined ? overridesChangeBehavior(model, entry) : false,
+    }
+  }
+
   /** Build the current settings/runtime/credential snapshot without secrets. */
   async snapshot(): Promise<VisionToolkitSettingsSnapshot> {
     const descriptor = descriptorOf(this.ctx)
@@ -290,6 +360,7 @@ export class VisionToolkitWebBackend {
         ...(credential.source === undefined ? {} : { source: credential.source }),
         writable: credential.writable,
       },
+      capabilities: this.capabilityFacts(resolved),
       runtime: this.manager.status(),
       release: {
         pluginVersion: PLUGIN_VERSION,
@@ -370,6 +441,32 @@ export class VisionToolkitWebBackend {
     }
   }
 
+  /**
+   * Fetch the relay model catalog with detected capabilities. An in-progress
+   * provider draft takes priority over the stored configuration so the picker
+   * works before the first save; invalid drafts fail loud at the schema
+   * boundary instead of silently listing the previous provider.
+   */
+  private async listModels(draft: ListModelsRequest['provider']): Promise<RelayModelCatalog> {
+    let provider: ResolvedVisionToolkitConfig['provider']
+    if (draft !== undefined && Object.keys(draft).length > 0) {
+      provider = resolveConfig({ provider: draft }).provider
+    } else {
+      provider = resolveConfig(descriptorOf(this.ctx).value as VisionToolkitConfig).provider
+    }
+    const resolvedCredential = isBuiltInFreeVisionProvider(provider)
+      ? { value: BUILT_IN_FREE_VISION_KEY, source: 'built-in' }
+      : await this.ctx.credentials.resolve(provider.credential)
+    if (resolvedCredential === undefined) {
+      throw new Error(`credential ${provider.credential} is not configured; save an API key first`)
+    }
+    return fetchRelayModels(
+      provider,
+      resolvedCredential.value,
+      visionProviderHeaders(provider, 'vision-toolkit-settings'),
+    )
+  }
+
   /** Handle the exact Settings route. */
   async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method === 'GET') {
@@ -411,6 +508,9 @@ export class VisionToolkitWebBackend {
         case 'check-update':
           responseJson(res, 200, { ok: true, value: await this.updater.check() })
           break
+        case 'list-models':
+          responseJson(res, 200, { ok: true, value: await this.listModels(parsed.provider) })
+          break
         case 'apply-update':
           responseJson(res, 200, { ok: true, value: await this.updater.installAndRestart(parsed.expectedVersion) })
           break
@@ -427,20 +527,24 @@ export class VisionToolkitWebBackend {
             ? error.code
           : parsed.action === 'health'
             ? 'health-failed'
-            : parsed.action === 'credential'
-              ? 'credential-rejected'
-              : 'settings-rejected'
+            : parsed.action === 'list-models'
+              ? 'list-models-failed'
+              : parsed.action === 'credential'
+                ? 'credential-rejected'
+                : 'settings-rejected'
       const updateConflict = updateError && ['update-in-progress', 'update-stale', 'update-unavailable', 'already-current'].includes(error.code)
       const updateGateway = updateError && error.code === 'update-check-failed'
       const status = settingsConflict || credentialConflict || updateConflict
         ? 409
         : parsed.action === 'health'
           ? 503
-          : updateGateway
+          : parsed.action === 'list-models'
             ? 502
-            : updateError
-              ? 500
-              : 400
+            : updateGateway
+              ? 502
+              : updateError
+                ? 500
+                : 400
       this.ctx.logger.warn('dsh-vision-toolkit Web action=%s failed: %s', parsed.action, publicMessage(error))
       requestError(res, status, code, publicMessage(error))
     }

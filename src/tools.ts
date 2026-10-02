@@ -112,6 +112,18 @@ const imageInfoSchema = {
   },
 } as const satisfies ValueSchemaSpec
 
+const mediaInfoSchema = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    path: { type: 'string', required: true },
+    bytes: { type: 'integer', required: true },
+    kind: { type: 'string', enum: ['video', 'audio', 'document'], required: true },
+    mediaType: { type: 'string', required: true },
+    originalPath: { type: 'string', required: true },
+  },
+} as const satisfies ValueSchemaSpec
+
 const artifactSchema = {
   type: 'object',
   additionalProperties: false,
@@ -201,11 +213,13 @@ export function createVisionTools(
   return [
     defineTool({
       name: VISION_TOOL_NAMES.glance,
-      description: 'Describe, answer a targeted question about, OCR, or compare one or more images with the configured vision model. '
-        + `Pass comparison images together in one call; use region to send only a small crop. Returns text, not coordinates. ${UNTRUSTED_EVIDENCE_NOTE} `
+      description: 'Describe, answer a targeted question about, OCR, or compare images, video, audio, or document files with the configured vision model. '
+        + 'Pass comparison inputs together in one call; use region to send only a small crop of one image. '
+        + 'Non-image inputs (video, audio, PDF/DOCX/XLSX/PPTX) require the configured model to accept that modality — check the error message when it does not. '
+        + `Returns text, not coordinates. ${UNTRUSTED_EVIDENCE_NOTE} `
         + WORKSPACE_NOTE,
       parameters: {
-        images: { type: 'array', items: { type: 'string' }, required: true, description: 'One or more image paths; pass comparison images together.' },
+        images: { type: 'array', items: { type: 'string' }, required: true, description: 'One or more input paths: images (png/jpg/webp/gif), video (mp4/webm/mkv/mov), audio (mp3/wav/m4a/ogg/flac), or documents (pdf/docx/xlsx/pptx); pass comparison inputs together.' },
         query: { type: 'string', description: 'Targeted question; omit for a detailed description.' },
         ocr: { type: 'boolean', description: 'Transcribe visible text; mutually exclusive with query.' },
         region: { type: 'string', description: `${REGION_NOTE} Exactly one image only.` },
@@ -215,6 +229,7 @@ export function createVisionTools(
         schema: {
           type: 'object', additionalProperties: false, properties: {
             images: { type: 'array', items: imageInfoSchema, required: true },
+            media: { type: 'array', items: mediaInfoSchema, description: 'Non-image inputs (video, audio, documents) analyzed in this call.' },
             mode: { type: 'string', enum: ['describe', 'qa', 'ocr'], required: true },
             answer: { type: 'string', required: true },
             truncated: { type: 'boolean', required: true },
@@ -233,7 +248,7 @@ export function createVisionTools(
       },
       isConcurrencySafe: () => true,
       presentCall: args => ({
-        card: 'generic', title: args.images.length > 1 ? `Compare ${args.images.length} images` : `Inspect ${args.images[0] ?? 'image'}`,
+        card: 'generic', title: args.images.length > 1 ? `Compare ${args.images.length} inputs` : `Inspect ${args.images[0] ?? 'input'}`,
         kind: 'read', locations: args.images.map(path => ({ path })),
       }),
     }),

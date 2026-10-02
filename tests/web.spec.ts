@@ -307,6 +307,122 @@ describe('VisionToolkitWebBackend', () => {
     expect(credentialService.set).not.toHaveBeenCalled()
   })
 
+  describe('list-models', () => {
+    async function relayServer(fixture: { status?: number; body: string } = {
+      status: 200,
+      body: JSON.stringify({ data: [{ id: 'qwen3.8-max-0902' }, { id: 'glm-5.3' }, { id: 'qwen-vl-max' }] }),
+    }): Promise<{ base: string; requests: Array<{ url: string; authorization?: string }> }> {
+      const requests: Array<{ url: string; authorization?: string }> = []
+      const relay = createServer((req, res) => {
+        requests.push({ url: req.url ?? '', authorization: req.headers.authorization })
+        res.statusCode = fixture.status ?? 200
+        res.setHeader('Content-Type', 'application/json')
+        res.end(fixture.body)
+      })
+      servers.push(relay)
+      await new Promise<void>((resolve, reject) => {
+        relay.once('error', reject)
+        relay.listen(0, '127.0.0.1', () => { resolve() })
+      })
+      const address = relay.address()
+      if (address === null || typeof address === 'string') throw new Error('relay did not bind')
+      return { base: `http://127.0.0.1:${address.port}/v1`, requests }
+    }
+
+    it('lists relay models with detected capabilities and resolved credential auth', async () => {
+      const relay = await relayServer()
+      const { post } = await setup()
+      const saved = await post({
+        action: 'save', expectedRevision: 0,
+        value: { provider: { baseUrl: relay.base, credential: 'RELAY_API_KEY', model: 'qwen3.8-max-0902' } },
+      })
+      expect(saved.status).toBe(200)
+
+      const response = await post({ action: 'list-models' })
+      const body = await response.json() as {
+        ok: true
+        value: { models: Array<{ id: string; capabilities: Record<string, boolean> }> }
+      }
+      expect(response.status).toBe(200)
+      expect(body.value.models.map(entry => entry.id)).toEqual(['glm-5.3', 'qwen-vl-max', 'qwen3.8-max-0902'])
+      expect(body.value.models.find(entry => entry.id === 'qwen3.8-max-0902')?.capabilities)
+        .toEqual({ image: true, video: true, audio: true, document: true })
+      expect(body.value.models.find(entry => entry.id === 'glm-5.3')?.capabilities)
+        .toEqual({ image: false, video: false, audio: false, document: false })
+      expect(relay.requests).toHaveLength(1)
+      expect(relay.requests[0]?.url).toBe('/v1/models')
+      expect(relay.requests[0]?.authorization).toBe('Bearer never-exposed-secret')
+    })
+
+    it('uses the in-progress provider draft before the first save', async () => {
+      const relay = await relayServer()
+      const { post } = await setup()
+      const response = await post({
+        action: 'list-models',
+        provider: { baseUrl: relay.base, credential: 'RELAY_API_KEY', protocol: 'openai' },
+      })
+      const body = await response.json() as { ok: true; value: { models: Array<{ id: string }> } }
+      expect(response.status).toBe(200)
+      expect(body.value.models).toHaveLength(3)
+      expect(relay.requests).toHaveLength(1)
+    })
+
+    it('rejects an invalid provider draft without contacting the relay', async () => {
+      const { post } = await setup()
+      const response = await post({
+        action: 'list-models',
+        provider: { baseUrl: 'not-a-url', credential: 'RELAY_API_KEY', protocol: 'openai' },
+      })
+      const body = await response.json() as { ok: false; error: { code: string; message: string } }
+      expect(response.status).toBe(502)
+      expect(body.error.code).toBe('list-models-failed')
+      expect(body.error.message).toContain('provider.baseUrl')
+    })
+
+    it('surfaces a relay credential rejection', async () => {
+      const relay = await relayServer({ status: 401, body: JSON.stringify({ error: 'unauthorized' }) })
+      const { post } = await setup()
+      const response = await post({
+        action: 'list-models',
+        provider: { baseUrl: relay.base, credential: 'RELAY_API_KEY', protocol: 'openai' },
+      })
+      const body = await response.json() as { ok: false; error: { code: string; message: string } }
+      expect(response.status).toBe(502)
+      expect(body.error.message).toContain('rejected the configured credential')
+    })
+  })
+
+  it('reports effective model capabilities in the snapshot', async () => {
+    const { base, post } = await setup()
+    const saved = await post({
+      action: 'save', expectedRevision: 0,
+      value: {
+        provider: {
+          baseUrl: 'https://vision.example/v1', credential: 'VISION_API_KEY', model: 'qwen3.8-max-0902',
+          modelCapabilities: { 'qwen3.8-max-0902': { audio: false } },
+        },
+      },
+    })
+    expect(saved.status).toBe(200)
+    const response = await fetch(base)
+    const body = await response.json() as {
+      ok: true
+      value: {
+        capabilities: {
+          model: string
+          effective: Record<string, boolean>
+          detected: Record<string, boolean>
+          overridden: boolean
+        }
+      }
+    }
+    expect(response.status).toBe(200)
+    expect(body.value.capabilities.model).toBe('qwen3.8-max-0902')
+    expect(body.value.capabilities.effective).toEqual({ image: true, video: true, audio: false, document: true })
+    expect(body.value.capabilities.detected).toEqual({ image: true, video: true, audio: true, document: true })
+    expect(body.value.capabilities.overridden).toBe(true)
+  })
+
   it('runs no probe on reads and tests the connection only after the explicit action', async () => {
     const { manager, base, post } = await setup()
     await fetch(base)
