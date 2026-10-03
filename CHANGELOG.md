@@ -4,6 +4,12 @@ All notable user-facing changes to DSH Vision Toolkit are documented in this fil
 
 ## [Unreleased]
 
+## [0.3.2] - fork
+
+### Fixed
+
+- **Pasted images now reach the Vision Toolkit flow instead of dying on the host's “The current model does not support images” toast.** The label-based paste verdict walked every provider — including this plugin's own image-input variants, whose routes reuse the wrapped model's exact name and declare image capability — so a variant's twin vote vetoed the very takeover its existence implies, the paste fell back to the native flow, and the host rejected the send. Variant providers no longer vote (and are not even queried) in the label verdict; a genuine image-capable upstream still keeps its native paste. Regression-tested with a same-name variant twin.
+
 ## [0.3.1] - fork
 
 ### Added

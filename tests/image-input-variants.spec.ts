@@ -1334,6 +1334,28 @@ describe('sessionPasteTakeover', () => {
     expect(ctx.llm.resolveModelInfo).not.toHaveBeenCalled()
   })
 
+  it('never lets this plugin’s own variant routes veto the label verdict', async () => {
+    // Regression: a variant reuses the wrapped model’s exact name and
+    // declares image input, so its vote vetoed the very takeover its
+    // existence implies — the paste then fell back to the native flow and
+    // the host rejected the image send with MODEL_DOES_NOT_SUPPORT_IMAGES.
+    const ctx = {
+      sessions: { get: () => undefined },
+      llm: {
+        listProviders: vi.fn(() => [{ id: 'local-relay', name: 'Local Relay' }, { id: 'vision-toolkit-local-relay', name: 'Local Relay (Vision Toolkit)' }]),
+        listModels: vi.fn(async (provider: string) => provider === 'local-relay'
+          ? [{ provider, id: 'kimi-k3', name: 'kimi-k3', inputModalities: ['text'] }]
+          : [{ provider, id: 'kimi-k3', name: 'kimi-k3', inputModalities: ['text', 'image'] }]),
+        resolveModelInfo: vi.fn(),
+      },
+      get: (name: string) => name === 'llm' ? ctx.llm : undefined,
+    } as never
+    expect(await sessionPasteTakeover(ctx, 's1', 'Select model, current kimi-k3')).toBe(true)
+    expect(ctx.llm.listModels).toHaveBeenCalledWith('local-relay')
+    // The variant provider never even gets asked.
+    expect(ctx.llm.listModels).not.toHaveBeenCalledWith('vision-toolkit-local-relay')
+  })
+
   it('falls back to the session header when the label matches nothing', async () => {
     const ctx = {
       sessions: {

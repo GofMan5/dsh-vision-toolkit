@@ -1,6 +1,6 @@
 {
   "name": "@gofman5/dsh-vision-toolkit",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "DeepSeek Harness-native integration for agent-vision-toolkit: image Q&A, OCR, grounding, UI restoration, pixel diff, Artifacts, and Web UI. Fork: relay model picker plus per-model multimodal capabilities (image/video/audio/document).",
   "keywords": [
     "deepseek",
