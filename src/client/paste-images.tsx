@@ -58,8 +58,8 @@ interface PasteConfirmState {
   sessionId: string
   files: File[]
   text: string
-  /** The composer textarea the paste landed on, for cursor restoration. */
-  target: HTMLTextAreaElement
+  /** The composer element the paste landed on (textarea or contenteditable), for caret restoration. */
+  target: HTMLElement
   /** Labels for the confirm card: what kinds are in the batch. */
   kinds: string[]
 }
@@ -74,7 +74,12 @@ interface PasteConfirmState {
 interface ClientSessionRegistry {
   /** Resolve the Session-scoped Context; undefined once the Session has closed. */
   scope(sessionId: never): ClientContext | undefined
-  /** Live Session list projection; `current` is the focused Session id. */
+  /**
+   * Live Session list projection. 0.1.5 publishes the focused Session as
+   * `current`; 0.2.0-rc hosts moved view selection out of the controller, so
+   * `current` is gone there and the dock slot's last injected Session id is
+   * the focused-session source instead.
+   */
   readonly list: { getSnapshot(): { readonly current?: string | undefined } }
 }
 
@@ -130,6 +135,122 @@ interface PasteOccurrence {
   /** DSH rc.8+ stores the full @label text; older releases used one placeholder. */
   length?: number
   label: string
+}
+
+/** Snapshot view of the input state the coordinate helpers read. */
+interface PasteInputStateView {
+  readonly draft: string
+  readonly occurrences: readonly PasteOccurrence[]
+}
+
+/**
+ * The per-session input face this controller drives. Structurally narrower
+ * than the host's published `SessionInput` so both the runtime face and the
+ * test stand-ins satisfy it; the Lexical-composer shell additionally carries
+ * the detect-coordinate verbs read through {@link ComposerShellExtras}.
+ */
+interface PasteSessionInput {
+  /** Insert one reference chip over a span (revision-CAS'd). */
+  insertReference(reference: {
+    source: string
+    ref: string
+    label: string
+    clipboardText: string
+  }, span: { start: number; end: number; draftRev: number }): boolean
+  /** Replace the whole draft. */
+  setDraft(text: string): void
+  /** Surface a composer notice. */
+  notify(level: 'info' | 'error', text: string): void
+  readonly state: {
+    getSnapshot(): {
+      readonly draft: string
+      readonly draftRev: number
+      readonly phase: 'plain' | 'adjudicating' | 'claimed' | 'submitting'
+      readonly occurrences: readonly PasteOccurrence[]
+    }
+    subscribe(listener: () => void): () => void
+  }
+}
+
+/**
+ * Lexical-composer shell verbs beyond the published `SessionInput` face: the
+ * resident shell satisfies `ComposerKeyboard` structurally, so the members are
+ * probed at runtime instead of imported. A textarea-era input answers none of
+ * them, which is exactly how the two composer generations are told apart.
+ */
+interface ComposerShellExtras {
+  /** Live selection as a detect-coordinate span; end-of-draft when nothing is selected. */
+  caretSpan?(): { start: number; end: number }
+  /** Return keyboard focus to the composer with the caret Lexical last held. */
+  focus?(): void
+  /** Replace one detect-coordinate span with plain text (revision-CAS'd). */
+  insertText?(text: string, span: { start: number; end: number; draftRev: number }): boolean
+}
+
+/**
+ * The shell's plain-text span verb. `insertText` ships on the composer shell
+ * but not on the `SessionInput` contract the plugin compiles against, so it
+ * is read structurally; an absent face answers false and the caller treats
+ * that as a composer change.
+ */
+function shellInsertText(
+  input: PasteSessionInput,
+  text: string,
+  span: { start: number; end: number; draftRev: number },
+): boolean {
+  const insert = (input as PasteSessionInput & ComposerShellExtras).insertText
+  return typeof insert === 'function' && insert.call(input, text, span) === true
+}
+
+/**
+ * Whether the input face is a Lexical-composer shell (detect-coordinate
+ * spans) rather than a textarea-era machine (single-coordinate spans). The
+ * `caretSpan` verb exists only on the composer shell.
+ */
+function isComposerShell(input: PasteSessionInput): boolean {
+  return typeof (input as PasteSessionInput & ComposerShellExtras).caretSpan === 'function'
+}
+
+/**
+ * Detect projection of one input snapshot: the clipboard draft with every
+ * reference chip's clipboard expansion folded to its single detect character.
+ * DSH's composer is a Lexical contenteditable whose insertion spans
+ * (`insertText`/`insertReference`) address this projection, while the
+ * published draft and occurrence offsets stay in clipboard coordinates.
+ */
+function detectTextOf(state: PasteInputStateView): string {
+  let text = ''
+  let at = 0
+  for (const occurrence of state.occurrences) {
+    const end = occurrence.offset + (occurrence.length ?? 1)
+    text += state.draft.slice(at, occurrence.offset) + '\uFFFC'
+    at = end
+  }
+  return text + state.draft.slice(at)
+}
+
+/**
+ * Fold one clipboard-projection boundary to its detect twin, mirroring the
+ * host's own `detectOffsetOfClipboardOffset`: a boundary inside a chip snaps
+ * to that chip's detect end, and a boundary after a chip subtracts the chip's
+ * expansion overhead. Occurrences are published sorted by offset.
+ */
+function detectOffsetOfClipboardBoundary(state: PasteInputStateView, clipboardOffset: number): number {
+  let detect = 0
+  let at = 0
+  for (const occurrence of state.occurrences) {
+    const length = occurrence.length ?? 1
+    const end = occurrence.offset + length
+    if (clipboardOffset <= occurrence.offset) break
+    if (clipboardOffset >= end) {
+      detect += (occurrence.offset - at) + 1
+      at = end
+      continue
+    }
+    // Inside the chip's expansion: the host snaps to the chip's trailing edge.
+    return detect + (occurrence.offset - at) + 1
+  }
+  return detect + (clipboardOffset - at)
 }
 
 type PasteDockProps = PropsRuntime<'conversation.input.dock'> & {
@@ -275,6 +396,12 @@ export class PasteImageController {
   private pendingConfirm: PasteConfirmState | undefined
   /** Session-scoped “don't ask again”: later pastes attach immediately. */
   private sessionAttachConfirmed = false
+  /**
+   * Session id last reported by the dock slot injection. 0.2.0-rc hosts
+   * dropped `sessions.list.current`, so the session the dock renders for is
+   * the focused-session source there; 0.1.5 keeps `current` authoritative.
+   */
+  private lastSessionId: string | undefined
 
   constructor(private readonly ctx: ClientContext) {}
 
@@ -315,13 +442,29 @@ export class PasteImageController {
       .filter((record): record is PasteRecord => record !== undefined)
   }
 
-  private inputFor(sessionId: string) {
-    const actx = sessionRegistry(this.ctx).scope(sessionId as never)
-    if (actx === undefined) throw new Error('Open a live session before pasting images')
-    return this.ctx.conversation.input.for(actx)
+  /** Record the Session the dock slot last rendered for (focused-session source on 0.2.0-rc hosts). */
+  attachSession(sessionId: string): void {
+    this.lastSessionId = sessionId
   }
 
-  private insertText(input: ReturnType<PasteImageController['inputFor']>, text: string, start: number, end = start): number {
+  /**
+   * The Session a composer paste belongs to. 0.1.5 answers from the Session
+   * list's focused id; 0.2.0-rc hosts answer from the dock slot's last
+   * injection, which follows the rendered conversation.
+   */
+  private currentSessionId(): string | undefined {
+    const current = sessionRegistry(this.ctx).list.getSnapshot().current
+    if (current !== undefined) return current
+    return this.lastSessionId
+  }
+
+  private inputFor(sessionId: string): PasteSessionInput {
+    const actx = sessionRegistry(this.ctx).scope(sessionId as never)
+    if (actx === undefined) throw new Error('Open a live session before pasting images')
+    return (this.ctx.conversation.input.for(actx) as PasteSessionInput)
+  }
+
+  private insertText(input: PasteSessionInput, text: string, start: number, end = start): number {
     if (text === '') return start
     const snapshot = input.state.getSnapshot()
     input.setDraft(snapshot.draft.slice(0, start) + text + snapshot.draft.slice(end))
@@ -330,7 +473,7 @@ export class PasteImageController {
 
   private insertRecords(
     sessionId: string,
-    input: ReturnType<PasteImageController['inputFor']>,
+    input: PasteSessionInput,
     files: readonly File[],
     cursor: number,
   ): number {
@@ -382,6 +525,101 @@ export class PasteImageController {
       input.setDraft(draftBeforeReferences)
       for (const record of batch.records) this.records.delete(record.ref)
       throw error
+    }
+  }
+
+  /**
+   * Insert one batch of files as reference chips through the Lexical
+   * composer shell's detect-coordinate, revision-CAS'd verbs. The host
+   * appends exactly one separating space after every chip (unless one
+   * already follows), so the insertion cursor walks the detect projection
+   * chip by chip; mid-batch failures roll the already-inserted chips back
+   * chip by chip instead of rewriting the whole draft, so chips this paste
+   * does not own survive untouched.
+   * @param sessionId - the live Session id.
+   * @param input - the composer shell face.
+   * @param files - the captured files, in paste order.
+   * @param cursor - detect-coordinate insertion point.
+   * @returns the final detect-coordinate cursor, right after the last chip.
+   */
+  private insertComposerRecords(
+    sessionId: string,
+    input: PasteSessionInput,
+    files: readonly File[],
+    cursor: number,
+  ): number {
+    const batch: PasteBatch = { sessionId, records: [] }
+    const inserted: string[] = []
+    try {
+      for (const [index, file] of files.entries()) {
+        const ref = id()
+        const label = pasteLabel(file, index)
+        const record: PasteRecord = { ref, file, batch, status: 'ready' }
+        batch.records.push(record)
+        this.records.set(ref, record)
+        let snapshot = input.state.getSnapshot()
+        const before = detectTextOf(snapshot).slice(0, cursor)
+        if (before !== '' && !/\s$/u.test(before)) {
+          if (!shellInsertText(input, ' ', { start: cursor, end: cursor, draftRev: snapshot.draftRev })) {
+            throw new Error('The composer changed before pasted files could be inserted')
+          }
+          cursor += 1
+          snapshot = input.state.getSnapshot()
+        }
+        const accepted = input.insertReference({
+          source: SOURCE,
+          ref,
+          label,
+          clipboardText: `[pasted ${fileKindLabel(file)}: ${label}]`,
+        }, { start: cursor, end: cursor, draftRev: snapshot.draftRev })
+        if (!accepted) throw new Error('The composer changed before pasted files could be inserted')
+        inserted.push(ref)
+        snapshot = input.state.getSnapshot()
+        const occurrence = snapshot.occurrences.find(candidate =>
+          candidate.source === SOURCE && candidate.ref === ref)
+        if (occurrence === undefined) throw new Error('The pasted file reference was not present after insertion')
+        const chipEnd = occurrenceEnd(occurrence)
+        cursor = detectOffsetOfClipboardBoundary(snapshot, chipEnd)
+        // Between consecutive chips, step over the host's separating space so
+        // the next insertion starts after it (the trailing space after the
+        // final chip stays behind the caret, like the textarea flow).
+        if (index + 1 < files.length && snapshot.draft.slice(chipEnd, chipEnd + 1) === ' ') cursor += 1
+      }
+      batch.unsubscribe = input.state.subscribe(() => {
+        const alive = new Set(input.state.getSnapshot().occurrences
+          .filter(occurrence => occurrence.source === SOURCE)
+          .map(occurrence => occurrence.ref))
+        let changed = false
+        for (const record of batch.records) {
+          if (alive.has(record.ref) || record.batch.inflight !== undefined) continue
+          changed = this.records.delete(record.ref) || changed
+        }
+        if (batch.records.every(record => !this.records.has(record.ref)) && batch.inflight === undefined) {
+          batch.unsubscribe?.()
+          batch.unsubscribe = undefined
+        }
+        if (changed) this.changed()
+      })
+      this.changed()
+      return cursor
+    } catch (error) {
+      for (const ref of inserted.reverse()) this.removeComposerChip(input, ref)
+      for (const record of batch.records) this.records.delete(record.ref)
+      throw error
+    }
+  }
+
+  /** Best-effort removal of one chip this batch already inserted (rollback path). */
+  private removeComposerChip(input: PasteSessionInput, ref: string): void {
+    try {
+      const snapshot = input.state.getSnapshot()
+      const occurrence = snapshot.occurrences.find(candidate =>
+        candidate.source === SOURCE && candidate.ref === ref)
+      if (occurrence === undefined) return
+      const start = detectOffsetOfClipboardBoundary(snapshot, occurrence.offset)
+      shellInsertText(input, '', { start, end: start + 1, draftRev: snapshot.draftRev })
+    } catch {
+      // Rollback is best-effort: the batch failure already surfaces a notice.
     }
   }
 
@@ -500,17 +738,40 @@ export class PasteImageController {
     })()
   }
 
+  /** Focus-time verdict prefetch for whichever Session the composer currently shows. */
+  prefetchVerdict(): void {
+    const sessionId = this.currentSessionId()
+    if (sessionId !== undefined) this.refreshVerdict(sessionId, currentModelLabel())
+  }
+
   /**
    * Path-takeover flow: insert the same-paste text and every file as a text
    * reference that serializes to the file's workspace path on send. The model
    * stays exactly where it is; the agent reads the path and calls the Vision
    * Toolkit tools on it.
    * @param sessionId - the live Session id.
-   * @param target - the composer textarea the paste landed on.
+   * @param target - the composer element the paste landed on.
    * @param files - the captured files.
    * @param text - same-paste text.
    */
   private takeoverPaste(
+    sessionId: string,
+    target: HTMLElement,
+    files: readonly File[],
+    text: string,
+  ): void {
+    if (target instanceof HTMLTextAreaElement) {
+      this.takeoverPasteTextarea(sessionId, target, files, text)
+      return
+    }
+    this.takeoverPasteComposer(sessionId, target, files, text)
+  }
+
+  /**
+   * Takeover flow for the textarea composer the 0.1.5 test stand-in
+   * publishes: single-coordinate draft splices through `setDraft`.
+   */
+  private takeoverPasteTextarea(
     sessionId: string,
     target: HTMLTextAreaElement,
     files: readonly File[],
@@ -528,6 +789,53 @@ export class PasteImageController {
       requestAnimationFrame(() => {
         target.focus({ preventScroll: true })
         target.setSelectionRange(cursor, cursor)
+      })
+    } catch (error) {
+      input.notify('error', message(error))
+    }
+  }
+
+  /**
+   * Takeover flow for the Lexical contenteditable DSH actually ships: the
+   * same-paste text replaces the live caret span and every file lands as a
+   * reference chip, all through the shell's detect-coordinate,
+   * revision-CAS'd insertion verbs. Focus returns through the shell so
+   * Lexical restores its caret instead of resetting it to the start.
+   */
+  private takeoverPasteComposer(
+    sessionId: string,
+    target: HTMLElement,
+    files: readonly File[],
+    text: string,
+  ): void {
+    let input: PasteSessionInput
+    try {
+      input = this.inputFor(sessionId)
+    } catch {
+      return
+    }
+    const shell = input as PasteSessionInput & ComposerShellExtras
+    const snapshot = input.state.getSnapshot()
+    if (snapshot.phase !== 'plain') return
+    try {
+      validateImages(files)
+      const detectLength = detectTextOf(snapshot).length
+      const caret = typeof shell.caretSpan === 'function'
+        ? shell.caretSpan()
+        : { start: detectLength, end: detectLength }
+      const start = Math.max(0, Math.min(caret.start, detectLength))
+      const end = Math.max(start, Math.min(caret.end, detectLength))
+      let cursor = start
+      if (text !== '') {
+        if (!shellInsertText(input, text, { start, end, draftRev: input.state.getSnapshot().draftRev })) {
+          throw new Error('The composer changed before the pasted text could be inserted')
+        }
+        cursor = start + text.length
+      }
+      cursor = this.insertComposerRecords(sessionId, input, files, cursor)
+      requestAnimationFrame(() => {
+        if (typeof shell.focus === 'function') shell.focus()
+        else target.focus({ preventScroll: true })
       })
     } catch (error) {
       input.notify('error', message(error))
@@ -564,9 +872,13 @@ export class PasteImageController {
     const files = pastedFiles(event.clipboardData)
     if (files.length === 0) return false
     const target = event.target
-    if (!(target instanceof HTMLTextAreaElement) || target.closest('[data-composer-card]') === null) return false
+    // The composer card hosts both composer generations: a textarea (legacy
+    // stand-ins) and the Lexical contenteditable DSH actually ships. Anything
+    // outside the card (queue rows, settings fields) keeps its native paste.
+    if (!(target instanceof HTMLElement)) return false
+    if (target.closest('[data-composer-card]') === null) return false
 
-    const sessionId = sessionRegistry(this.ctx).list.getSnapshot().current
+    const sessionId = this.currentSessionId()
     if (sessionId === undefined) return false
     const modelLabel = currentModelLabel()
     this.refreshVerdict(sessionId, modelLabel)
@@ -582,11 +894,19 @@ export class PasteImageController {
       || verdict?.autoSwitch !== undefined
     if (!needsPlugin) return false
 
+    // Resolve the composer before swallowing the event: without a reachable
+    // shell the plugin cannot insert anything, and the native flow is the
+    // honest fallback for the host to answer.
+    let input: PasteSessionInput
+    try {
+      input = this.inputFor(sessionId)
+    } catch {
+      return false
+    }
+
     event.preventDefault()
     event.stopPropagation()
     event.stopImmediatePropagation()
-
-    const input = this.inputFor(sessionId)
     if (input.state.getSnapshot().phase !== 'plain') return true
 
     const text = (event.clipboardData?.getData('text/plain') ?? '').replaceAll('\uFFFC', '')
@@ -608,7 +928,12 @@ export class PasteImageController {
   remove(sessionId: string, occurrence: PasteOccurrence): void {
     const record = this.records.get(occurrence.ref)
     if (record?.batch.inflight !== undefined) return
-    const input = this.inputFor(sessionId)
+    let input: PasteSessionInput
+    try {
+      input = this.inputFor(sessionId)
+    } catch {
+      return
+    }
     const snapshot = input.state.getSnapshot()
     if (snapshot.phase !== 'plain') return
     const current = snapshot.occurrences.find(candidate =>
@@ -616,14 +941,15 @@ export class PasteImageController {
       && candidate.occurrenceId === occurrence.occurrenceId
       && candidate.ref === occurrence.ref)
     if (current === undefined) return
-    const accepted = (input as typeof input & {
-      insertText: (text: string, span: { start: number; end: number; draftRev: number }) => boolean
-    }).insertText('', {
-      start: current.offset,
-      end: occurrenceEnd(current),
-      draftRev: snapshot.draftRev,
-    })
-    if (!accepted) return
+    // The Lexical composer's chips occupy exactly one detect character; the
+    // textarea-era machine spans the occurrence's full clipboard expansion.
+    const span = isComposerShell(input)
+      ? (() => {
+        const start = detectOffsetOfClipboardBoundary(snapshot, current.offset)
+        return { start, end: start + 1, draftRev: snapshot.draftRev }
+      })()
+      : { start: current.offset, end: occurrenceEnd(current), draftRev: snapshot.draftRev }
+    if (!shellInsertText(input, '', span)) return
     this.records.delete(occurrence.ref)
     this.changed()
   }
@@ -788,10 +1114,7 @@ export function installPasteImages(ctx: ClientContext): void {
   ctx.effect(() => {
     const listener = (event: ClipboardEvent): void => { controller.handlePaste(event) }
     // A focus-time prefetch has the verdict ready before the first paste can land.
-    const onFocusIn = (): void => {
-      const sessionId = sessionRegistry(ctx).list.getSnapshot().current
-      if (sessionId !== undefined) controller.refreshVerdict(String(sessionId), currentModelLabel())
-    }
+    const onFocusIn = (): void => { controller.prefetchVerdict() }
     document.addEventListener('paste', listener, true)
     document.addEventListener('focusin', onFocusIn, true)
     return () => {
@@ -803,9 +1126,15 @@ export function installPasteImages(ctx: ClientContext): void {
     name: 'conversation.input.dock',
     id: 'vision-toolkit-pasted-images',
     order: 6,
-    inject: sessionId => ({
-      controller,
-      remove: (occurrence: PasteOccurrence) => { controller.remove(String(sessionId), occurrence) },
-    }),
+    inject: sessionId => {
+      // The dock renders for exactly the Session whose composer is on
+      // screen, so this is the focused-session source on hosts without
+      // `sessions.list.current`.
+      controller.attachSession(String(sessionId))
+      return {
+        controller,
+        remove: (occurrence: PasteOccurrence) => { controller.remove(String(sessionId), occurrence) },
+      }
+    },
   }, PasteImageDock))
 }

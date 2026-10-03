@@ -10,8 +10,8 @@ interface PasteConfirmState {
     sessionId: string;
     files: File[];
     text: string;
-    /** The composer textarea the paste landed on, for cursor restoration. */
-    target: HTMLTextAreaElement;
+    /** The composer element the paste landed on (textarea or contenteditable), for caret restoration. */
+    target: HTMLElement;
     /** Labels for the confirm card: what kinds are in the batch. */
     kinds: string[];
 }
@@ -53,15 +53,46 @@ export declare class PasteImageController {
     private pendingConfirm;
     /** Session-scoped “don't ask again”: later pastes attach immediately. */
     private sessionAttachConfirmed;
+    /**
+     * Session id last reported by the dock slot injection. 0.2.0-rc hosts
+     * dropped `sessions.list.current`, so the session the dock renders for is
+     * the focused-session source there; 0.1.5 keeps `current` authoritative.
+     */
+    private lastSessionId;
     constructor(ctx: ClientContext);
     subscribe: (listener: () => void) => (() => void);
     snapshot: () => number;
     private changed;
     source(): InputTriggerSource;
     recordsFor(occurrences: readonly PasteOccurrence[]): PasteRecord[];
+    /** Record the Session the dock slot last rendered for (focused-session source on 0.2.0-rc hosts). */
+    attachSession(sessionId: string): void;
+    /**
+     * The Session a composer paste belongs to. 0.1.5 answers from the Session
+     * list's focused id; 0.2.0-rc hosts answer from the dock slot's last
+     * injection, which follows the rendered conversation.
+     */
+    private currentSessionId;
     private inputFor;
     private insertText;
     private insertRecords;
+    /**
+     * Insert one batch of files as reference chips through the Lexical
+     * composer shell's detect-coordinate, revision-CAS'd verbs. The host
+     * appends exactly one separating space after every chip (unless one
+     * already follows), so the insertion cursor walks the detect projection
+     * chip by chip; mid-batch failures roll the already-inserted chips back
+     * chip by chip instead of rewriting the whole draft, so chips this paste
+     * does not own survive untouched.
+     * @param sessionId - the live Session id.
+     * @param input - the composer shell face.
+     * @param files - the captured files, in paste order.
+     * @param cursor - detect-coordinate insertion point.
+     * @returns the final detect-coordinate cursor, right after the last chip.
+     */
+    private insertComposerRecords;
+    /** Best-effort removal of one chip this batch already inserted (rollback path). */
+    private removeComposerChip;
     /**
      * The host's verdict for one Session and selector label, when fresh. The
      * last CONFIRMED answer is authoritative while a background refresh is in
@@ -92,17 +123,32 @@ export declare class PasteImageController {
      * @param modelLabel - the model-selector label currently shown.
      */
     refreshVerdict(sessionId: string, modelLabel: string): void;
+    /** Focus-time verdict prefetch for whichever Session the composer currently shows. */
+    prefetchVerdict(): void;
     /**
      * Path-takeover flow: insert the same-paste text and every file as a text
      * reference that serializes to the file's workspace path on send. The model
      * stays exactly where it is; the agent reads the path and calls the Vision
      * Toolkit tools on it.
      * @param sessionId - the live Session id.
-     * @param target - the composer textarea the paste landed on.
+     * @param target - the composer element the paste landed on.
      * @param files - the captured files.
      * @param text - same-paste text.
      */
     private takeoverPaste;
+    /**
+     * Takeover flow for the textarea composer the 0.1.5 test stand-in
+     * publishes: single-coordinate draft splices through `setDraft`.
+     */
+    private takeoverPasteTextarea;
+    /**
+     * Takeover flow for the Lexical contenteditable DSH actually ships: the
+     * same-paste text replaces the live caret span and every file lands as a
+     * reference chip, all through the shell's detect-coordinate,
+     * revision-CAS'd insertion verbs. Focus returns through the shell so
+     * Lexical restores its caret instead of resetting it to the start.
+     */
+    private takeoverPasteComposer;
     /** The paste currently waiting for the attach confirmation, when any. */
     confirmState(): Readonly<PasteConfirmState> | undefined;
     /**

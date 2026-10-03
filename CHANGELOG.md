@@ -4,6 +4,18 @@ All notable user-facing changes to DSH Vision Toolkit are documented in this fil
 
 ## [Unreleased]
 
+## [0.4.0] - fork
+
+### Fixed
+
+- **Pasted media works in the real DSH composer.** The clipboard capture only accepted `HTMLTextAreaElement` paste targets, but DSH's composer is a Lexical contenteditable — so the interception never fired on any real host release and every pasted image died on the native flow's «The current model does not support images» toast. The capture now accepts any element inside the composer card and drives the insertion through the composer shell's own verbs: the same-paste text replaces the live caret span and each file lands as a reference chip, in the shell's detect-coordinate spans (a chip is one character) guarded by the draft-revision CAS, with the host's separating-space rule honored between consecutive chips. Focus returns through the shell so Lexical restores its caret instead of resetting it to the start. Mid-batch failures roll the already-inserted chips back chip by chip instead of rewriting the whole draft, so pre-existing reference chips survive untouched.
+- **Session resolution on DSH 0.2.0-rc hosts.** 0.2.0-rc.2 moved view selection out of the Session controller (`sessions.list.current` no longer exists), so the paste had no session to act on. The focused Session now also comes from the dock slot's injected session id — the conversation the composer on screen belongs to — with the legacy `current` field kept as the first choice where it still exists.
+- **Chip-removal coordinates.** Removing a pasted-file chip from the dock addressed the occurrence's clipboard-projection span, which only matched the composer on drafts without chips; the removal now folds the chip's clipboard offset to its single detect character, matching the shell's own consume-token behavior.
+
+### Compatibility
+
+- The textarea-era insertion flow (0.1.5 test stand-ins) remains the documented fallback for any host that still ships a textarea composer; the two generations are told apart by the shell's `caretSpan` verb, not by version sniffing. The 0.1.5-rc.1 and 0.2.0-rc.2 hosts share the same composer-shell face, so both are covered by the new path.
+
 ## [0.3.2] - fork
 
 ### Fixed

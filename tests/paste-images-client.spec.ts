@@ -29,8 +29,7 @@ type ReferenceDraftMode = 'placeholder' | 'display-text'
  * the older `imageIds` name is gone. The stand-in mirrors the 0.1.5 snapshot
  * shape so the suite certifies the contract the runtime actually ships.
  */
-function inputMachine(initial = '', referenceDraftMode: ReferenceDraftMode = 'placeholder') {
-  let state = {
+function inputMachine(initial = '', referenceDraftMode: ReferenceDraftMode = 'placeholder') {  let state = {
     draft: initial,
     draftRev: 0,
     phase: 'plain' as const,
@@ -112,13 +111,183 @@ function inputMachine(initial = '', referenceDraftMode: ReferenceDraftMode = 'pl
 
 type TriggerService = 'slash' | 'inputTriggers'
 
+/** One pre-existing reference chip the composer shell machine starts with. */
+interface ChipSpec {
+  source: string
+  ref: string
+  label: string
+  clipboardText: string
+}
+
+/**
+ * Faithful stand-in for the composer shell DSH 0.1.5-rc.1+ actually ships:
+ * the published draft and occurrence offsets stay in clipboard coordinates
+ * (each chip expands to its full clipboard text), while the insertion verbs
+ * (`insertText`/`insertReference`) take detect-coordinate spans where a chip
+ * occupies exactly one character, guarded by the revision CAS, and the host
+ * appends one separating space after every inserted chip unless one already
+ * follows. `caretSpan` and `focus` exist only on this shell face — their
+ * presence is how the plugin tells the two composer generations apart.
+ */
+function composerShellMachine(parts: Array<string | ChipSpec> = []) {
+  let draft = ''
+  const seeded: Occurrence[] = []
+  let occurrenceId = 0
+  for (const part of parts) {
+    if (typeof part === 'string') {
+      draft += part
+      continue
+    }
+    occurrenceId += 1
+    seeded.push({
+      occurrenceId,
+      source: part.source,
+      ref: part.ref,
+      offset: draft.length,
+      length: part.clipboardText.length,
+      label: part.label,
+      clipboardText: part.clipboardText,
+    })
+    draft += part.clipboardText
+  }
+  let state = {
+    draft,
+    draftRev: 0,
+    phase: 'plain' as const,
+    attachmentIds: [] as string[],
+    occurrences: [...seeded] as Occurrence[],
+    queue: [],
+  }
+  const listeners = new Set<() => void>()
+  const publish = (next: typeof state) => {
+    state = next
+    for (const listener of listeners) listener()
+  }
+  /** Clipboard projection: every chip expands to its clipboard text. */
+  const detectTextOf = (): string => {
+    let text = ''
+    let at = 0
+    for (const occurrence of state.occurrences) {
+      text += state.draft.slice(at, occurrence.offset) + '\uFFFC'
+      at = occurrence.offset + (occurrence.length ?? 1)
+    }
+    return text + state.draft.slice(at)
+  }
+  /** Inverse projection: one detect boundary to its clipboard twin (chips snap to their end). */
+  const clipboardOfDetect = (detectOffset: number): number => {
+    let dd = 0
+    let cc = 0
+    for (const occurrence of state.occurrences) {
+      const length = occurrence.length ?? 1
+      const textBefore = occurrence.offset - cc
+      if (detectOffset <= dd + textBefore) return cc + (detectOffset - dd)
+      if (detectOffset <= dd + textBefore + 1) return occurrence.offset + length
+      dd += textBefore + 1
+      cc = occurrence.offset + length
+    }
+    return cc + (detectOffset - dd)
+  }
+  let caret = detectTextOf().length
+  let insertCalls = 0
+  let failInsertAt: number | undefined
+  return {
+    state: {
+      getSnapshot: () => state,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener)
+        return () => { listeners.delete(listener) }
+      },
+    },
+    caretSpan: vi.fn(() => ({ start: caret, end: caret })),
+    focus: vi.fn(),
+    setCaret: (at: number) => {
+      caret = at
+    },
+    /** Test hook: make the Nth insertReference call (1-based) fail like a lost revision CAS. */
+    failInsertReferenceOnCall: (nth: number) => {
+      failInsertAt = nth
+    },
+    insertReference: vi.fn((reference: Omit<Occurrence, 'occurrenceId' | 'offset' | 'length'>, span: { start: number; end: number; draftRev: number }) => {
+      insertCalls += 1
+      if (failInsertAt === insertCalls) return false
+      if (span.draftRev !== state.draftRev || span.start > span.end) return false
+      const cs = clipboardOfDetect(span.start)
+      const ce = clipboardOfDetect(span.end)
+      const chipText = reference.clipboardText
+      // Host tail rule: one separating space unless one already follows.
+      const added = detectTextOf().slice(span.end, span.end + 1) === ' ' ? '' : ' '
+      const inserted = chipText + added
+      occurrenceId += 1
+      const occurrence: Occurrence = {
+        occurrenceId,
+        source: reference.source,
+        ref: reference.ref,
+        offset: cs,
+        length: chipText.length,
+        label: reference.label,
+        clipboardText: reference.clipboardText,
+      }
+      const shifted = state.occurrences.flatMap((row) => {
+        const end = row.offset + (row.length ?? 1)
+        if (end <= cs) return [row]
+        if (row.offset >= ce) return [{ ...row, offset: row.offset + inserted.length - (ce - cs) }]
+        return []
+      })
+      publish({
+        ...state,
+        draft: state.draft.slice(0, cs) + inserted + state.draft.slice(ce),
+        draftRev: state.draftRev + 1,
+        occurrences: [...shifted, occurrence].sort((a, b) => a.offset - b.offset),
+      })
+      caret = span.start + 1 + (added === ' ' ? 1 : 0)
+      return true
+    }),
+    insertText: vi.fn((text: string, span: { start: number; end: number; draftRev: number }) => {
+      if (span.draftRev !== state.draftRev || span.start > span.end) return false
+      const cs = clipboardOfDetect(span.start)
+      const ce = clipboardOfDetect(span.end)
+      const delta = text.length - (ce - cs)
+      const occurrences = state.occurrences.flatMap((row) => {
+        const end = row.offset + (row.length ?? 1)
+        if (end <= cs || row.offset >= ce) {
+          if (row.offset >= ce) return [{ ...row, offset: row.offset + delta }]
+          return [row]
+        }
+        return []
+      })
+      publish({
+        ...state,
+        draft: state.draft.slice(0, cs) + text + state.draft.slice(ce),
+        draftRev: state.draftRev + 1,
+        occurrences,
+      })
+      caret = span.start + text.length
+      return true
+    }),
+    setDraft: vi.fn((text: string) => {
+      publish({ ...state, draft: text, draftRev: state.draftRev + 1, occurrences: [] })
+    }),
+    addAttachments: vi.fn(() => true),
+    notify: vi.fn(),
+  }
+}
+
+/** Benches still holding document-level listeners; afterEach sweeps failed tests' leaks. */
+const liveBenches: Array<ReturnType<typeof fakeClient>> = []
+
 function fakeClient(
   initial = '',
   triggerServices: readonly TriggerService[] = ['slash'],
   aliasTriggers = false,
   referenceDraftMode: ReferenceDraftMode = 'placeholder',
+  options: {
+    /** Install a composer-shell machine instead of the textarea stand-in. */
+    input?: ReturnType<typeof composerShellMachine>
+    /** Publish the 0.2.0-rc Session list face (no `current` field). */
+    modernList?: boolean
+  } = {},
 ) {
-  const input = inputMachine(initial, referenceDraftMode)
+  const input = options.input ?? inputMachine(initial, referenceDraftMode)
   const effects: Array<() => void> = []
   const registrations: Array<{
     options: Record<string, unknown>
@@ -141,7 +310,7 @@ function fakeClient(
   }
   const ctx: Record<string, unknown> = {
     sessions: {
-      list: { getSnapshot: () => ({ current: 'session-1' }) },
+      list: { getSnapshot: () => options.modernList === true ? { byId: {} } : { current: 'session-1', byId: {} } },
       scope: () => ({}),
     },
     conversation: { input: { for: () => input } },
@@ -165,7 +334,7 @@ function fakeClient(
     if (services.every(service => ctx[service] !== undefined)) callback(ctx)
   })
   installPasteImages(ctx as never)
-  return {
+  const bench = {
     ctx,
     input,
     registrations,
@@ -177,8 +346,14 @@ function fakeClient(
       effects[index] = () => {}
       dispose()
     },
-    dispose: () => effects.reverse().forEach(fn => { fn() }),
+    dispose: () => {
+      const at = liveBenches.indexOf(bench)
+      if (at >= 0) liveBenches.splice(at, 1)
+      effects.reverse().forEach(fn => { fn() })
+    },
   }
+  liveBenches.push(bench)
+  return bench
 }
 
 function file(name: string, type: string, bytes: number[]): File {
@@ -269,6 +444,12 @@ function pasteAndConfirm(bench: ReturnType<typeof fakeClient>, textarea: HTMLTex
 
 afterEach(() => {
   document.body.replaceChildren()
+  // A failed assertion can skip a bench's own dispose(); without this sweep
+  // its document-level paste/focusin listeners leak into the next test and
+  // cascade one failure into many.
+  while (liveBenches.length > 0) {
+    liveBenches[liveBenches.length - 1]?.dispose()
+  }
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
@@ -949,6 +1130,179 @@ describe('clipboard image client', () => {
       .toEqual(['clip.mp4', 'report.pdf'])
     expect(uploads[0]?.[1].headers).toMatchObject({ 'Content-Type': 'video/mp4' })
     expect(uploads[1]?.[1].headers).toMatchObject({ 'Content-Type': 'application/pdf' })
+    bench.dispose()
+  })
+})
+
+describe('clipboard image client (Lexical composer shell)', () => {
+  /** The contenteditable DSH actually ships inside the composer card. */
+  function contenteditable(): HTMLElement {
+    const card = document.createElement('div')
+    card.dataset.composerCard = ''
+    const editable = document.createElement('div')
+    editable.setAttribute('contenteditable', 'true')
+    card.appendChild(editable)
+    document.body.appendChild(card)
+    return editable
+  }
+
+  /** Seed a confirmed verdict the way focus into a mounted dock does. */
+  async function confirmModernTakeover(bench: ReturnType<typeof fakeClient>): Promise<void> {
+    // The dock mount publishes the rendered Session id: the focused-session
+    // source on hosts whose Session list has no `current`.
+    controllerOf(bench)
+    await confirmTakeover(bench)
+  }
+
+  /** Dispatch the paste onto the contenteditable and confirm the dialog. */
+  function pasteAndConfirmModern(bench: ReturnType<typeof fakeClient>, editable: HTMLElement, event: ClipboardEvent): void {
+    editable.dispatchEvent(event)
+    const controller = controllerOf(bench)
+    if (controller.confirmState() === undefined) throw new Error('paste did not open the attach confirmation')
+    controller.confirmAttach(false)
+  }
+
+  it('inserts pasted text and every file through detect-coordinate spans', async () => {
+    const shell = composerShellMachine(['prefix '])
+    const bench = fakeClient('', ['slash'], false, 'placeholder', { input: shell, modernList: true })
+    await confirmModernTakeover(bench)
+    const editable = contenteditable()
+    shell.setCaret(7)
+
+    const event = clipboardEvent('caption', [
+      file('one.png', 'image/png', [1]),
+      file('two.webp', 'image/webp', [2, 3]),
+    ])
+    pasteAndConfirmModern(bench, editable, event)
+
+    expect(event.defaultPrevented).toBe(true)
+    const snapshot = shell.state.getSnapshot()
+    expect(snapshot.draft).toBe('prefix caption [pasted image: one.png] [pasted image: two.webp] ')
+    expect(snapshot.occurrences.map(row => [row.offset, row.length])).toEqual([[15, 23], [39, 24]])
+    expect(shell.insertText).toHaveBeenNthCalledWith(1, 'caption', { start: 7, end: 7, draftRev: 0 })
+    expect(shell.insertText).toHaveBeenNthCalledWith(2, ' ', { start: 14, end: 14, draftRev: 1 })
+    expect(shell.insertReference).toHaveBeenNthCalledWith(1, expect.objectContaining({ source: 'vision-toolkit-pasted-image' }), { start: 15, end: 15, draftRev: 2 })
+    expect(shell.insertReference).toHaveBeenNthCalledWith(2, expect.objectContaining({ source: 'vision-toolkit-pasted-image' }), { start: 17, end: 17, draftRev: 3 })
+    await vi.waitFor(() => { expect(shell.focus).toHaveBeenCalled() })
+    bench.dispose()
+  })
+
+  it('places chips at the caret between pre-existing chips without disturbing them', async () => {
+    const shell = composerShellMachine(['AA', { source: 'reference', ref: '@file', label: 'file', clipboardText: '@file' }, 'BB'])
+    const bench = fakeClient('', ['slash'], false, 'placeholder', { input: shell, modernList: true })
+    await confirmModernTakeover(bench)
+    const editable = contenteditable()
+    // Caret between the @file chip and the trailing text (detect offset 3).
+    shell.setCaret(3)
+
+    pasteAndConfirmModern(bench, editable, clipboardEvent('', [file('one.png', 'image/png', [1])]))
+
+    const snapshot = shell.state.getSnapshot()
+    expect(shell.insertText).toHaveBeenNthCalledWith(1, ' ', { start: 3, end: 3, draftRev: 0 })
+    expect(shell.insertReference).toHaveBeenNthCalledWith(1, expect.anything(), { start: 4, end: 4, draftRev: 1 })
+    expect(snapshot.draft).toBe('AA@file [pasted image: one.png] BB')
+    expect(snapshot.occurrences.map(row => [row.ref, row.offset, row.length])).toEqual([
+      ['@file', 2, 5],
+      [expect.any(String), 8, 23],
+    ])
+    bench.dispose()
+  })
+
+  it('resolves the focused session from the dock injection when the Session list has no current', async () => {
+    const shell = composerShellMachine()
+    const bench = fakeClient('', ['slash'], false, 'placeholder', { input: shell, modernList: true })
+    const editable = contenteditable()
+    const nativePaste = vi.fn()
+    editable.addEventListener('paste', nativePaste)
+    const policy = vi.fn(async () => policyResponse(true))
+    vi.stubGlobal('fetch', policy)
+
+    // Without a dock mount there is no focused-session source: the paste
+    // stays native and the verdict is never even asked.
+    editable.dispatchEvent(clipboardEvent('', [file('one.png', 'image/png', [1])]))
+    expect(nativePaste).toHaveBeenCalledTimes(1)
+    expect(policy).not.toHaveBeenCalled()
+    expect(shell.insertReference).not.toHaveBeenCalled()
+
+    // Mounting the dock publishes the rendered Session; the focus prefetch
+    // asks under that id and the next paste is taken over.
+    controllerOf(bench)
+    document.dispatchEvent(new Event('focusin'))
+    await vi.waitFor(() => { expect(policy).toHaveBeenCalledTimes(1) })
+    await new Promise(resolve => setTimeout(resolve, 0))
+    pasteAndConfirmModern(bench, editable, clipboardEvent('', [file('two.png', 'image/png', [2])]))
+    expect(shell.state.getSnapshot().occurrences).toHaveLength(1)
+    bench.dispose()
+  })
+
+  it('removes one chip through its single detect character', async () => {
+    const shell = composerShellMachine()
+    const bench = fakeClient('', ['slash'], false, 'placeholder', { input: shell, modernList: true })
+    await confirmModernTakeover(bench)
+    const editable = contenteditable()
+    pasteAndConfirmModern(bench, editable, clipboardEvent('', [
+      file('one.png', 'image/png', [1]),
+      file('two.png', 'image/png', [2]),
+    ]))
+    const dock = bench.registrations.find(row => row.options.id === 'vision-toolkit-pasted-images')
+    if (dock === undefined) throw new Error('paste dock was not registered')
+    const injected = (dock.options.inject as ((sessionId: string) => {
+      controller: PasteImageController
+      remove: (row: Occurrence) => void
+    }))('session-1')
+    const original = shell.state.getSnapshot().occurrences
+    const first = original[0]
+    if (first === undefined) throw new Error('first occurrence was not inserted')
+    const revision = shell.state.getSnapshot().draftRev
+
+    injected.remove(first)
+
+    expect(shell.insertText).toHaveBeenLastCalledWith('', { start: 0, end: 1, draftRev: revision })
+    const after = shell.state.getSnapshot()
+    expect(after.occurrences.map(row => row.ref)).toEqual([original[1]?.ref])
+    expect(after.occurrences[0]?.offset).toBe(1)
+    expect(injected.controller.recordsFor(original)).toHaveLength(1)
+    bench.dispose()
+  })
+
+  it('keeps the draft untouched when admission fails on the composer shell', async () => {
+    const shell = composerShellMachine(['keep '])
+    const bench = fakeClient('', ['slash'], false, 'placeholder', { input: shell, modernList: true })
+    await confirmModernTakeover(bench)
+    const editable = contenteditable()
+    const images = Array.from({ length: 21 }, (_, index) => file(`${index}.png`, 'image/png', [index]))
+
+    pasteAndConfirmModern(bench, editable, clipboardEvent('caption', images))
+
+    const snapshot = shell.state.getSnapshot()
+    expect(snapshot.draft).toBe('keep ')
+    expect(snapshot.occurrences).toEqual([])
+    expect(shell.insertReference).not.toHaveBeenCalled()
+    expect(shell.insertText).not.toHaveBeenCalled()
+    expect(shell.notify).toHaveBeenCalledWith('error', 'Paste at most 20 images at a time')
+    bench.dispose()
+  })
+
+  it('rolls back already-inserted chips when the composer changes mid-batch', async () => {
+    const shell = composerShellMachine()
+    const bench = fakeClient('', ['slash'], false, 'placeholder', { input: shell, modernList: true })
+    await confirmModernTakeover(bench)
+    const editable = contenteditable()
+    // The second reference insertion loses the revision CAS (the composer
+    // changed under the pick-time span): the first chip must be rolled back.
+    shell.failInsertReferenceOnCall(2)
+
+    pasteAndConfirmModern(bench, editable, clipboardEvent('', [
+      file('one.png', 'image/png', [1]),
+      file('two.png', 'image/png', [2]),
+    ]))
+
+    expect(shell.notify).toHaveBeenCalledWith('error', 'The composer changed before pasted files could be inserted')
+    expect(shell.state.getSnapshot().occurrences).toEqual([])
+    // The rolled-back chip is gone; the host's separating space remains.
+    expect(shell.state.getSnapshot().draft).toBe(' ')
+    const controller = controllerOf(bench)
+    expect(controller.recordsFor(shell.state.getSnapshot().occurrences)).toEqual([])
     bench.dispose()
   })
 })
