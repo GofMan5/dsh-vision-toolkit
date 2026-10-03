@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { networkInterfaces } from 'node:os'
 import { sameOriginPost, sameOriginRequest } from '../src/web-request.ts'
 
 type Headers = Record<string, string | undefined>
@@ -12,6 +13,16 @@ function request(headers: Headers) {
     ),
   }
   return incoming as Parameters<typeof sameOriginRequest>[0]
+}
+
+/** One non-loopback address this machine actually serves on, when it has any. */
+function ownInterfaceAddress(): string | undefined {
+  for (const infos of Object.values(networkInterfaces())) {
+    for (const info of infos ?? []) {
+      if (info.family === 'IPv4' && !info.internal) return info.address
+    }
+  }
+  return undefined
 }
 
 describe('sameOriginRequest', () => {
@@ -30,10 +41,32 @@ describe('sameOriginRequest', () => {
     expect(sameOriginRequest(request({ host: '127.0.0.1:19387', origin: 'http://evil.example', 'sec-fetch-site': 'cross-site' }))).toBe(false)
   })
 
-  it('accepts a matching http(s) Origin regardless of host locality', () => {
+  it('accepts a matching http(s) Origin on a Host this machine serves', () => {
     expect(sameOriginRequest(request({ host: '127.0.0.1:19387', origin: 'http://127.0.0.1:19387' }))).toBe(true)
     expect(sameOriginRequest(request({ host: 'localhost:19387', origin: 'http://localhost:19387' }))).toBe(true)
-    expect(sameOriginRequest(request({ host: 'vision.lan:8443', origin: 'https://vision.lan:8443' }))).toBe(true)
+    const own = ownInterfaceAddress()
+    if (own !== undefined) {
+      expect(sameOriginRequest(request({ host: `${own}:8443`, origin: `https://${own}:8443` }))).toBe(true)
+      // Same-origin browser GETs carry Sec-Fetch-Site instead of Origin.
+      expect(sameOriginRequest(request({ host: `${own}:19387`, 'sec-fetch-site': 'same-origin' }))).toBe(true)
+      expect(sameOriginRequest(request({ host: `${own}:19387`, 'sec-fetch-site': 'none' }))).toBe(true)
+    }
+  })
+
+  it('rejects DNS-rebinding shapes: a foreign Host never earns trust, even with a matching Origin', () => {
+    // The rebinder's page is served from evil.example and the domain then
+    // resolves to this machine, so the browser honestly sends
+    // Host: evil.example + Origin: http://evil.example. The Host is not one
+    // this machine serves, so the request is rejected before any Origin
+    // comparison — the mirror of the host /api fence's trusted-authority
+    // step.
+    expect(sameOriginRequest(request({ host: 'evil.example:3080', origin: 'http://evil.example:3080' }))).toBe(false)
+    expect(sameOriginRequest(request({ host: 'vision.lan:8443', origin: 'https://vision.lan:8443' }))).toBe(false)
+    // Fetch-Metadata is browser-set but client-forgeable: it never rescues a
+    // foreign Host.
+    expect(sameOriginRequest(request({ host: 'evil.example:19387', 'sec-fetch-site': 'same-origin' }))).toBe(false)
+    expect(sameOriginRequest(request({ host: 'evil.example:19387', 'sec-fetch-site': 'none' }))).toBe(false)
+    expect(sameOriginRequest(request({ host: 'evil.example:19387' }))).toBe(false)
   })
 
   it('rejects an Origin that does not match the Host', () => {
@@ -48,14 +81,7 @@ describe('sameOriginRequest', () => {
     expect(sameOriginRequest(request({ host: '127.0.0.1:19387', origin: 'dsh-app://app' }))).toBe(false)
   })
 
-  it('keeps same-origin browser GETs working without an Origin header', () => {
-    // Browsers attach Sec-Fetch-Site instead of Origin to same-origin GETs.
-    expect(sameOriginRequest(request({ host: 'vision.lan:19387', 'sec-fetch-site': 'same-origin' }))).toBe(true)
-    expect(sameOriginRequest(request({ host: 'vision.lan:19387', 'sec-fetch-site': 'none' }))).toBe(true)
-  })
-
-  it('requires origin evidence on non-loopback hosts', () => {
-    expect(sameOriginRequest(request({ host: 'vision.lan:19387' }))).toBe(false)
+  it('requires a Host this machine serves', () => {
     expect(sameOriginRequest(request({}))).toBe(false)
     expect(sameOriginRequest(request({ host: 'not a host' }))).toBe(false)
   })

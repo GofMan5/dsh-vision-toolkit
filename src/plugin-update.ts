@@ -421,7 +421,10 @@ export function compareVersions(left: string, right: string): number {
     if (typeof x === 'number' && typeof y === 'number') return x < y ? -1 : 1
     if (typeof x === 'number') return -1
     if (typeof y === 'number') return 1
-    return x.localeCompare(y)
+    // SemVer compares prerelease identifiers by ASCII code points; a
+    // locale-aware compare orders case-insensitively and can flip results
+    // between prereleases that differ only in case.
+    return x < y ? -1 : 1
   }
   return 0
 }
@@ -1133,12 +1136,17 @@ export class VisionToolkitPluginUpdateService {
       updateAttempted = true
       // Git installs pin the resolved commit in the install spec: a floating
       // `github:owner/repo` spec keeps the stale lockfile resolution (pnpm
-      // reuses the cached tarball), while `#<sha>` always resolves fresh bytes.
+      // reuses the cached tarball), while `#<sha>` always resolves fresh
+      // bytes. Registry specs pin through --save-exact instead: pnpm's
+      // default save-prefix would float the dependency to ^x.y.z.
       const installSpec = final.gitSource !== undefined && check.latestCommit !== undefined
         ? pinnedGitSpec(final.gitSource, check.latestCommit)
         : `${VISION_TOOLKIT_PACKAGE}@${expectedVersion}`
+      const registryInstall = installSpec.startsWith(VISION_TOOLKIT_PACKAGE)
       const result = await this.runPnpm([
-        'add', installSpec, '--yes', '--reporter=append-only',
+        'add', installSpec,
+        ...(registryInstall ? ['--save-exact'] : []),
+        '--yes', '--reporter=append-only',
       ], UPDATE_TIMEOUT_MS, final.profile, final.pnpmPath)
       if (result.exitCode !== 0) {
         throw new PluginUpdateError('update-failed', publicCommandFailure(result, 'Plugin update failed'))
@@ -1160,11 +1168,22 @@ export class VisionToolkitPluginUpdateService {
 
       const healthUrl = this.healthUrl
       if (this.platform === 'win32' || !this.allowDetachedRestart || healthUrl === undefined) {
-        await cleanupUpdateBackup(updateBackup)
+        // The install is verified and the lock is the only thing holding the
+        // next update back: release it before the best-effort backup
+        // cleanup, so a cleanup failure (e.g. a Windows AV lock) can never
+        // route a successful update into the rollback path.
+        const backup = updateBackup
         updateBackup = undefined
         await locked.release()
         locked = undefined
         this.updating = false
+        if (backup !== undefined) {
+          try {
+            await cleanupUpdateBackup(backup)
+          } catch {
+            // A leftover backup directory is inert; the verified install stays.
+          }
+        }
         return {
           fromVersion: this.currentVersion,
           toVersion: installedVersion,

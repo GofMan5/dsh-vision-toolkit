@@ -39,16 +39,18 @@ dsh plugin --profile desktop add github:GofMan5/dsh-vision-toolkit
 
 ## 4. 更新到新版本
 
-1. 在 [fork 仓库](https://github.com/GofMan5/dsh-vision-toolkit) 查看最新提交。
-2. 在 **DSH 终端** 中重新执行安装命令，让依赖重新解析到当前 `main`：
+**应用内更新（推荐）。** 打开 **设置 → 视觉工具**，点击 **Check for updates**：
+
+- GitHub git 安装完全支持应用内更新：检查通过 GitHub API 读取 fork 仓库默认分支的最新提交，**Install update** 会固定到解析出的 commit 重新安装（pnpm 不会复用过期的浮动解析）。安装后会校验实际版本，并在确认成功前保留恢复备份。
+- Windows 上应用无法自行重启，更新完成后仍需**完全退出并重新打开 DSH Desktop**；其他平台会自动重启，新版本启动失败时自动回滚。
+
+**终端更新（备用）。** 在 **DSH 终端** 中重新执行安装命令，让依赖重新解析到当前 `main`：
 
 ```sh
 dsh plugin --profile desktop add github:GofMan5/dsh-vision-toolkit
 ```
 
-3. 再次**完全退出并重启 DSH Desktop**，新版本才会生效。
-
-git 安装方式的插件内更新检查是有意禁用的：更新面板会提示更新源仓库，而不是从 npm 替换。
+然后**完全退出并重启 DSH Desktop**，新版本才会生效。
 
 ## 常见问题
 
@@ -64,4 +66,4 @@ git 安装方式的插件内更新检查是有意禁用的：更新面板会提�
 
 - [Fork 仓库](https://github.com/GofMan5/dsh-vision-toolkit)
 - [上游 npm 包](https://www.npmjs.com/package/@anionex/dsh-vision-toolkit)
-- [DSH Desktop 用户指南](https://github.com/anywhere-labs/deepseek-harness-desktop/blob/master/docs/user-guide.md)
+- [DSH Desktop 用户指南](https://github.com/anywhere-labs/dsh-desktop/blob/master/docs/user-guide.md)

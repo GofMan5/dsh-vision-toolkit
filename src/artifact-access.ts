@@ -57,6 +57,9 @@ const MIME_BY_EXTENSION = new Map<string, { mimeType: string; kind: ArtifactKind
   ['.webp', { mimeType: 'image/webp', kind: 'image' }],
   ['.svg', { mimeType: 'image/svg+xml', kind: 'svg' }],
   ['.md', { mimeType: 'text/markdown', kind: 'markdown' }],
+  // vision_long_screenshot_ocr accepts .markdown beside .md; without the
+  // twin entry its tokens would verify but the preview/download URL 404s.
+  ['.markdown', { mimeType: 'text/markdown', kind: 'markdown' }],
   ['.json', { mimeType: 'application/json', kind: 'json' }],
 ])
 
@@ -402,5 +405,11 @@ export class ArtifactAccessController {
       res.destroy()
     })
     stream.pipe(res)
+    // A client abort mid-transfer leaves the paused stream's file handle
+    // open (pipe only unpipes); destroying it on close lets autoClose
+    // release the handle.
+    res.on('close', () => {
+      if (!stream.readableEnded) stream.destroy()
+    })
   }
 }

@@ -188,11 +188,15 @@ describe('Vision Toolkit client plugin', () => {
     })
   })
 
-  it('uses current client runtime invalidation events when remote.$on is unavailable', () => {
+  it('falls back to the connection reset listener when remote.$on is unavailable', () => {
     const { ctx } = fakeClientContext(false)
     apply(ctx as never)
-    expect(ctx.on).toHaveBeenCalledWith('settings/changed', expect.any(Function))
-    expect(ctx.on).toHaveBeenCalledWith('credentials/changed', expect.any(Function))
+    // No ctx-level twin events exist on any supported host generation:
+    // without `$on` there is no remote-event invalidation channel at all,
+    // and subscribing to names that never fire would silently disable
+    // invalidations.
+    expect(ctx.on).not.toHaveBeenCalledWith('settings/changed', expect.any(Function))
+    expect(ctx.on).not.toHaveBeenCalledWith('credentials/changed', expect.any(Function))
     expect(ctx.on).toHaveBeenCalledWith('connection/reset', expect.any(Function))
   })
 

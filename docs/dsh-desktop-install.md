@@ -39,16 +39,18 @@ Notes:
 
 ## 4. Update to a new version
 
-1. Check the latest commits on the [fork repository](https://github.com/GofMan5/dsh-vision-toolkit).
-2. In the **DSH Terminal**, rerun the install command so the dependency re-resolves to the current `main` head:
+**In-app (preferred).** Open **Settings → Vision Toolkit** and press **Check for updates**:
+
+- GitHub-hosted installs are fully supported: the check reads the fork repository's default-branch head through the GitHub API, and **Install update** re-installs pinned to the resolved commit (so pnpm never reuses a stale floating-spec resolution). The plugin verifies the installed version afterwards and keeps a recovery backup until the update is confirmed.
+- On Windows the app cannot restart itself, so after the update completes you still need to **fully quit and reopen DSH Desktop**; on other platforms the restart is automatic with rollback if the new version does not come up healthy.
+
+**Terminal (fallback).** Rerun the install command in the **DSH Terminal** so the dependency re-resolves to the current `main` head:
 
 ```sh
 dsh plugin --profile desktop add github:GofMan5/dsh-vision-toolkit
 ```
 
-3. **Fully quit and reopen DSH Desktop** so the new version takes effect.
-
-In-app update checks are intentionally disabled for git installations: the plugin's update panel tells you to update the source repository instead of replacing it from npm.
+Then **fully quit and reopen DSH Desktop** so the new version takes effect.
 
 ## Troubleshooting
 
@@ -64,4 +66,4 @@ In-app update checks are intentionally disabled for git installations: the plugi
 
 - [Fork repository](https://github.com/GofMan5/dsh-vision-toolkit)
 - [Upstream npm package](https://www.npmjs.com/package/@anionex/dsh-vision-toolkit)
-- [DSH Desktop user guide](https://github.com/anywhere-labs/deepseek-harness-desktop/blob/master/docs/user-guide.en.md)
+- [DSH Desktop user guide](https://github.com/anywhere-labs/dsh-desktop/blob/master/docs/user-guide.en.md)

@@ -19,6 +19,8 @@ interface PasteRecord {
     ref: string;
     file: File;
     batch: PasteBatch;
+    /** The exact paste-time label (trimmed name or clipboard-kind fallback) the chip carries. */
+    label: string;
     status: 'ready' | 'copying' | 'copied' | 'error';
     error?: string | undefined;
     absolutePath?: string | undefined;

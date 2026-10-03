@@ -384,6 +384,8 @@ interface SettingsState {
     action?: 'save' | 'health' | 'connection' | 'model' | 'list-models' | 'check-update' | 'apply-update' | undefined;
     message?: string | undefined;
     error?: string | undefined;
+    /** Monotonic counter of user-requested reloads; a draft re-seed trigger beside the settings revision. */
+    reloadSeq: number;
 }
 /** Small external store shared by the Settings route and pushed invalidations. */
 export declare class VisionSettingsController {
@@ -393,7 +395,14 @@ export declare class VisionSettingsController {
     subscribe: (listener: () => void) => (() => void);
     snapshot: () => SettingsState;
     private set;
-    load(): Promise<void>;
+    /**
+     * Load the Settings snapshot. An explicit (user-requested) load marks the
+     * result as authoritative so the form re-seeds even at an unchanged
+     * revision — after a rejected save, the server restores the last good
+     * generation under the same revision and the user expects Reload to
+     * discard their rejected draft. Background refreshes keep unsaved edits.
+     */
+    load(explicit?: boolean): Promise<void>;
     refreshIfLoaded(): void;
     save(value: SettingsValue, expectedRevision: number, credentialValue: string | undefined, writeSettings: boolean): Promise<boolean>;
     runHealth(mode: 'health' | 'connection' | 'model'): Promise<void>;

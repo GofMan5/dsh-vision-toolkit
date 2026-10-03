@@ -24,7 +24,7 @@
 ## What this fork adds
 
 - **Model picker from the relay.** In Settings → Vision service, press **Load models**: the plugin queries `GET {baseUrl}/models` with your saved credential (OpenAI- and Anthropic-shaped responses are parsed, de-duplicated, capped at 500), and offers the catalog as a dropdown next to the model field. It uses the in-progress form values, so it works before the first save; every entry is annotated with its detected modalities.
-- **Per-model capability matrix.** Checkboxes for **Images / Video / Audio / Documents** describe what the selected vision model accepts. Heuristic name-based defaults prefill them (Qwen-Max 0902+ and omni models → all four; `*-vl` families → image+video; Claude → image+PDF; Gemini → all four; text tiers like `qwen-turbo`, `glm-*`, `deepseek-*` → none; image-generation models like `qwen-image-*` → none). Toggles that match the detected default are dropped, so the stored map only keeps real deviations; *Reset to detected* restores the heuristic.
+- **Per-model capability matrix.** Checkboxes for **Images / Video / Audio / Documents** describe what the selected vision model accepts. Heuristic name-based defaults prefill them (the Qwen-Max family — plain `qwen-max`, `qwen3.8-max`, … — and omni models → all four; `*-vl` families → image+video; Claude → image+PDF; Gemini → all four; text tiers like `qwen-turbo`, `glm-*`, `deepseek-*` → none; image-generation models like `qwen-image-*` → none). Toggles that match the detected default are dropped, so the stored map only keeps real deviations; *Reset to detected* restores the heuristic.
 - **Multimodal `vision_glance`.** The glance tool now accepts video (`.mp4/.webm/.mkv/.mov/.avi/.m4v/.3gp`), audio (`.mp3/.wav/.m4a/.aac/.ogg/.opus/.flac`), and documents (`.pdf/.docx/.xlsx/.pptx/.doc/.xls/.ppt`) next to images, bounded by a configurable `maxMediaBytes` (default 32 MiB). Inputs are routed to protocol-appropriate content parts:
   - **OpenAI Chat Completions** — `image_url`, `video_url` (Qwen/DashScope-compatible), `input_audio`, and the `file` part for documents;
   - **OpenAI Responses** — `input_image` and `input_file`;
@@ -41,7 +41,7 @@
 
 ## Highlights
 
-- **Paste media and ask directly.** In DSH Web, pasting a screenshot, video, audio, or document file that the current model cannot take natively opens a small attach confirmation above the composer — «Прикепить» attaches it as a workspace-path reference for the Vision Toolkit without switching the model, and «Больше не показывать в этой сессии» skips the question for the rest of the session. Image-capable models keep the fully native image paste flow.
+- **Paste media and ask directly.** In DSH Web, pasting a screenshot, video, audio, or document file that the current model cannot take natively opens a small attach confirmation above the composer — «Прикрепить» attaches it as a workspace-path reference for the Vision Toolkit without switching the model, and «Больше не показывать в этой сессии» skips the question for the rest of the session. Image-capable models keep the fully native image paste flow.
 - **One command to install.** After installation, configure a vision provider in **Settings → Vision Toolkit** and start using the tools.
 - **Not just a caption — the content that matters.** The model does not produce a generic description; it extracts evidence around the current task, such as “Where is the error?” or “Where is the button?”.
 - **A battle-tested visual-task methodology.** The bundled Skill tells the agent what to look at for different visual tasks, which tool to choose, how to proceed, and how to verify the result.
@@ -73,8 +73,9 @@ dsh plugin --profile web add github:GofMan5/dsh-vision-toolkit
 
 ## Recent updates
 
+- **fork 0.4.1 · Full-review hardening:** The origin fence now mirrors the host `/api` boundary completely (DNS-rebinding closed, the Settings snapshot GET fenced), registry updates pin exactly, `.markdown` artifacts deliver, and transparent routing hides duplicate model entries on DSH 0.2.0-rc hosts (see [CHANGELOG.md](CHANGELOG.md) for the full list and for 0.2.1–0.4.0: Desktop origin fix, the attach-confirmation dialog with media paste, git in-app updates, the variant-vote fix, and the Lexical-composer paste port).
 - **fork 0.2.0 · Relay model picker + capability matrix:** Settings can load the model catalog from the relay (`GET /models`), every model carries detected input modalities, and per-model overrides declare what it accepts. `vision_glance` now takes video, audio, and document files alongside images and routes them to `video_url` / `input_audio` / `file` (or `input_file` / Anthropic document) content parts; unsupported modalities fail with an actionable error before any bytes are sent.
-- **2026-08-19 · Transparent routing by default:** The model selector keeps one entry per model with the original name, and image input (paste, history, `read_image`) works without manually switching to a `(Vision Toolkit)` variant. Disable “Transparent variant routing” in advanced settings → image input to restore the explicit entries.
+- **2026-08-19 · Transparent routing by default:** The model selector keeps one entry per model with the original name, and image input (paste, history, `read_image`) works without manually switching to a `(Vision Toolkit)` variant. Disable “Keep the original model names and enable images automatically” in advanced settings → image input to restore the explicit entries.
 - **2026-08-16 · Windows Python:** Added Microsoft Store Python support, fixing first-time isolated-runtime setup failures for affected Windows users.
 - **2026-08-17 · Vision upgrade:** Switched the default model to Gemini 3.7 Flash and fixed Qwen/Gemini bounding-box coordinate order.
 - **2026-08-16 · Image paste:** Text-only routes now switch to a `(Vision Toolkit)` variant and keep a workspace path, fixing blocked pastes and images that could not be reused later.
@@ -246,7 +247,7 @@ coarse-to-fine method, and task SOPs remain intact. The exact upstream Skill
 commit, source hashes, adapted hashes, and reviewable adapter patch are
 recorded in `assets/skill/UPSTREAM.json` and `patches/vision-tools-dsh.patch`.
 
-For routes that DSH positively identifies as text-only, the plugin registers a sibling `<model> (Vision Toolkit)` variant. By default, pasting an image in DSH Web switches to that variant and gives the model both a reusable workspace path and a visual description focused on the current task.
+For routes that DSH positively identifies as text-only, the plugin registers a sibling `<model> (Vision Toolkit)` variant. Pasting media in DSH Web never switches models silently: it opens the attach-confirmation card above the composer, and confirming attaches workspace-path references the model reads through `vision_glance`. Users who prefer the native image flow can still pick the variant entry manually; with transparent routing enabled the variant even keeps the original model name.
 
 ## Configuration and limits
 
@@ -307,7 +308,7 @@ For advanced setups — overriding `runtime.python`, using `runtime.mode: extern
 | Problem | What to do |
 | --- | --- |
 | The vision-model test fails with `Vision API returned an incompatible response structure` | The base URL usually needs a path prefix. Local OpenAI-compatible services such as LM Studio and Ollama should be entered as `http://127.0.0.1:1234/v1` (include `/v1`); the plugin appends `/chat/completions` for OpenAI Chat Completions or `/responses` for OpenAI Responses, and a port-only address may hit an unknown endpoint |
-| Pasting an image still says the model does not support image input | Restart the Web Profile, refresh the page, and confirm the selected route has the `(Vision Toolkit)` suffix. You can also place the image in the session workspace and invoke `/vision-skills` |
+| Pasting an image still says the model does not support image input | Restart the Web Profile and refresh the page, then paste again: the attach-confirmation card should appear above the composer, and confirming attaches the file as a Vision Toolkit reference. You can also place the image in the session workspace and invoke `/vision-skills` |
 | The vision service returns 429 | Wait for the `Retry-After` interval, or switch to your own endpoint when you need stable higher volume |
 | The image exceeds a size or pixel limit | Crop or resize it first; the error identifies whether bytes or decoded pixels caused the rejection |
 | A custom Credential is missing | Enter the API key in **Settings → Vision Toolkit** and confirm the Credential name matches the provider configuration |

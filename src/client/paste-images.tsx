@@ -95,6 +95,8 @@ interface PasteRecord {
   ref: string
   file: File
   batch: PasteBatch
+  /** The exact paste-time label (trimmed name or clipboard-kind fallback) the chip carries. */
+  label: string
   status: 'ready' | 'copying' | 'copied' | 'error'
   error?: string | undefined
   absolutePath?: string | undefined
@@ -428,7 +430,7 @@ export class PasteImageController {
         clipboardText: ref => {
           const record = this.records.get(ref)
           const kind = record === undefined ? 'file' : fileKindLabel(record.file)
-          return `[pasted ${kind}: ${record?.file.name ?? ref}]`
+          return `[pasted ${kind}: ${record?.label ?? ref}]`
         },
         serialize: (ref, signal) => this.serialize(ref, signal),
       },
@@ -485,7 +487,7 @@ export class PasteImageController {
       for (const [index, file] of files.entries()) {
         const ref = id()
         const label = pasteLabel(file, index)
-        const record: PasteRecord = { ref, file, batch, status: 'ready' }
+        const record: PasteRecord = { ref, file, batch, label, status: 'ready' }
         batch.records.push(record)
         this.records.set(ref, record)
         const snapshot = input.state.getSnapshot()
@@ -554,7 +556,7 @@ export class PasteImageController {
       for (const [index, file] of files.entries()) {
         const ref = id()
         const label = pasteLabel(file, index)
-        const record: PasteRecord = { ref, file, batch, status: 'ready' }
+        const record: PasteRecord = { ref, file, batch, label, status: 'ready' }
         batch.records.push(record)
         this.records.set(ref, record)
         let snapshot = input.state.getSnapshot()

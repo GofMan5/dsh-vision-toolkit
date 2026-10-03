@@ -15,7 +15,7 @@
 | P0-5 skill 生命周期 | **已交付** | [`src/index.ts`](../../src/index.ts) 中的就绪顺序、生命周期中止和全局 disposer；[`src/exposure.ts`](../../src/exposure.ts) 中的逐 Agent 激活、恢复和释放；[`src/skill.ts`](../../src/skill.ts) 中的打包内容 | [`tests/tools.spec.ts`](../../tests/tools.spec.ts) 中的 Agent 隔离、原生/直接/Code Mode 激活、Session 恢复、在途取消和释放用例；[`tests/profile-install.e2e.spec.ts`](../../tests/profile-install.e2e.spec.ts) 中的渐进暴露、禁用和卸载路径 |
 | P0-6 纯文本模型结果 | **已交付** | [`src/tools.ts`](../../src/tools.ts) 中的 JSON 输出 schema 与纯渲染函数；[`src/artifacts.ts`](../../src/artifacts.ts) 中的规范产物描述；[`src/exposure.ts`](../../src/exposure.ts) 中由持久 Skill 加载证据派生的 schema 可见性 | [`tests/tools.spec.ts`](../../tests/tools.spec.ts) 中的工具 schema/展示断言、[`tests/profile-install.e2e.spec.ts`](../../tests/profile-install.e2e.spec.ts) 中逐请求的 schema 与模型可见 transcript（文本记录）断言 |
 | P0-7 稳定错误 | **已交付** | [`src/errors.ts`](../../src/errors.ts)，以及 [`src/paths.ts`](../../src/paths.ts)、[`src/runtime.ts`](../../src/runtime.ts)、[`src/upstream.ts`](../../src/upstream.ts) 中的边界验证 | [`tests/errors.spec.ts`](../../tests/errors.spec.ts)、[`tests/paths.spec.ts`](../../tests/paths.spec.ts)，以及运行时/上游测试中的解析、超时、取消、Credential 和容量用例 |
-| P0-8 测试与文档 | **已交付** | 双语 [`README.md`](../../README.md)、软件包测试、managed 运行时、示例和已提交构建产物 | `pnpm run build`、`pnpm test`、`pnpm pack --dry-run`、翻译/Markdown 门禁和无真实 Key 的干净 Profile e2e |
+| P0-8 测试与文档 | **已交付** | 双语 [`README.md`](../../README.md)、软件包测试、managed 运行时、示例和已提交构建产物 | `pnpm run build`、`pnpm test`、`pnpm pack --dry-run` 和无真实 Key 的干净 Profile e2e |
 
 ## P1 产品需求
 
@@ -59,7 +59,7 @@
 |---|---|---|
 | P2 稳定 `ctx.visionToolkit` 服务与能力发现 | **按设计推迟** | 产品需求要求至少一个独立插件消费方出现后再稳定该 API。`VisionToolkitRuntime` 保持包内部使用，使 P0/P1 可以继续演进，而不会制造虚假的兼容性承诺。 |
 | P2 提供方生态 | **按设计推迟** | 本包支持固定上游，并通过 OpenAI Chat Completions、OpenAI Responses 或 Anthropic Messages 使用一个已配置端点；不会预先构建无人使用的提供方注册表。 |
-| P3 探索性输入与自动化 | **范围外** | 上传/拖拽、摄像头/视频/音频/文档输入、交互式标注、自动点击、远程集群、模型路由/投票和跨 Session 缓存不属于本版本契约。 |
+| P3 探索性输入与自动化 | **范围外** | 上传/拖拽进输入框、摄像头采集、交互式标注、自动点击、远程集群、模型路由/投票和跨 Session 缓存不属于本版本契约。（视频/音频/文档输入已交付：`vision_glance` 按能力矩阵门禁把它们路由到协议对应的内容块，Web 粘贴流程也会存为工作区文件——见 P1 与分支新增内容。） |
 
 ## 可复现验证
 

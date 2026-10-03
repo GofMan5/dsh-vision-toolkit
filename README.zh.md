@@ -15,15 +15,33 @@
 
 🚀 粘贴图片，直接提问 ｜ 一行命令安装即用 ｜ 场景丰富
 
-[亮点](#亮点) ｜ [快速开始](#快速开始三步完成) ｜ [工具一览](#工具一览) ｜ [配置与限制](#配置与限制) ｜ [常见问题](#常见问题) ｜ [开发](#开发)
+[亮点](#亮点) ｜ [本分支新增](#本分支新增) ｜ [快速开始](#快速开始三步完成) ｜ [工具一览](#工具一览) ｜ [配置与限制](#配置与限制) ｜ [常见问题](#常见问题) ｜ [开发](#开发)
 
 🌐 [English](README.md) ｜ **中文**
 
 </div>
 
+## 本分支新增
+
+- **从中继选择模型。** 在 设置 → 视觉服务 里按 **Load models**：插件用保存的凭证请求 `GET {baseUrl}/models`（兼容 OpenAI 与 Anthropic 两种响应，去重、上限 500 项），把目录渲染成模型下拉；直接使用表单里的值，首次保存前就能用。每个条目标注检测到的输入模态。
+- **按模型声明能力矩阵。** 用 **图片 / 视频 / 音频 / 文档** 复选框描述所选视觉模型接受哪些输入。按名称启发式预填（Qwen-Max 家族——`qwen-max`、`qwen3.8-max` 等——和 omni 系列 → 四项全开；`*-vl` 系列 → 图片+视频；Claude → 图片+PDF；Gemini → 四项全开；`qwen-turbo`、`glm-*`、`deepseek-*` 等文本档 → 全关；`qwen-image-*` 等生图模型 → 全关）。与检测默认值相同的开关会被丢弃，存储的映射只保留真正的差异；*重置为检测值* 可恢复启发式。
+- **多模态 `vision_glance`。** 除图片外，glance 还接受视频（`.mp4/.webm/.mkv/.mov/.avi/.m4v/.3gp`）、音频（`.mp3/.wav/.m4a/.aac/.ogg/.opus/.flac`）和文档（`.pdf/.docx/.xlsx/.pptx/.doc/.xls/.ppt`），受可配置的 `maxMediaBytes`（默认 32 MiB）约束。输入按协议路由到对应内容块：
+  - **OpenAI Chat Completions** — `image_url`、`video_url`（Qwen/DashScope 兼容）、`input_audio`，文档用 `file` 块；
+  - **OpenAI Responses** — `input_image` 和 `input_file`；
+  - **Anthropic Messages** — 图片块和 PDF `document` 块。
+
+  非图片输入在工具结果里以 `media` 数组呈现（类型、媒体类型、字节数）。
+- **能力门禁与可操作的报错。** 模型不接受某个模态时，glance 在**任何字节发出之前**就拒绝——TypeScript 运行时和 Python 客户端（通过 `VISION_MODALITIES` 环境变量）各拦一次——报错直接指向设置里的能力矩阵。切换视觉模型的行为可预期：同一个 `vision_glance` 调用在全多模态 Qwen 上可用，在纯文本模型上大声失败，而不是返回难懂的提供方错误。
+- **粘贴媒体确认对话框。** 在当前模型无法原生接收时，粘贴截图、视频、音频或文档会在输入框上方弹出确认卡片——«Прикрепить … для использования плагином Vision Toolkit»，带 «Больше не показывать в этой сессии» 复选框。确认后以工作区路径引用附加文件，不切换模型；静默自动切换到变体路由的机制已移除，变体条目仍可手动选择。
+- **视频、音频和文档直接粘贴进输入框**，每个文件上限 100 MiB，引用文本带类型标注，agent 可直接交给 `vision_glance`。
+- **分支仓库的应用内更新。** GitHub git 安装支持 **Check for updates** 和一键更新：检查读取仓库默认分支头（commit + 版本），安装固定到解析出的 commit，pnpm 不会再复用过期的浮动解析。npm 安装沿用原有流程；本地/workspace/非 GitHub URL 安装仍需手动。
+- **聊天侧媒体如何到达模型。** DSH 宿主附件契约保持 text+image；视频、音频和文档附件以带工作区路径的持久文件句柄到达，纯文本聊天模型看到路径后调用 `vision_glance`——因为*视觉*模型接受该模态，所以现在这条路是通的。
+
+> **外部运行时说明：** 附带的 `agent-vision-toolkit` 快照包含本分支的多模态内容块改动，`UPSTREAM_MANIFEST.json` 已重新生成，因此 `runtime.mode: external` 需要本分支 `vendor/agent-vision-toolkit` 目录的精确导出（干净的上游检出不匹配）。默认的 managed 模式不受影响。
+
 ## 亮点
 
-- **粘贴图片，直接提问。** 在 DSH Web 里粘贴图片，文本模型会自动切换到看图模式变体，不需要手动复制路径或更换模型。图片保留原生缩略图、会话记录和工作区路径；Web 可以预览产物。
+- **粘贴媒体，直接提问。** 在 DSH Web 里粘贴截图、视频、音频或文档，当前模型无法原生接收时会在输入框上方弹出附加确认——«Прикрепить» 把它作为 Vision Toolkit 的工作区路径引用附加，不切换模型；«Больше не показывать в этой сессии» 让本会话后续粘贴不再询问。支持图片的模型保持完全原生的图片粘贴流程。
 - **一行命令安装即用。** 安装插件后即可在 **设置 → 视觉工具** 中配置视觉模型并开始使用。
 - **不只是看图描述，是获取图中真正需要关注的内容。** 模型不只是生成通用描述，而是围绕“报错在哪里”“按钮在哪”等当前任务提取证据。
 - **一套经过实战验证的视觉任务方法论**：项目提供的skill，会告诉 agent 面对不同视觉任务时应该看什么、选择哪个工具、按什么步骤推进，以及最后如何验证结果。
@@ -44,6 +62,7 @@ dsh plugin --profile web add github:GofMan5/dsh-vision-toolkit
 **目录**
 
 - [亮点](#亮点)
+- [本分支新增](#本分支新增)
 - [最近更新](#最近更新)
 - [适合谁用](#适合谁用)
 - [实际效果](#实际效果)
@@ -55,7 +74,9 @@ dsh plugin --profile web add github:GofMan5/dsh-vision-toolkit
 
 ## 最近更新
 
-- **2026-08-19 · 透明变体路由默认开启：** 模型选择器默认只显示每个模型一项并保留原模型名，粘贴图片、历史图片和内置 `read_image` 工具都能直接使用，不再需要手动切换到 `(Vision Toolkit)` 变体；如需恢复显式条目，可在 设置 → 高级设置 → 图片输入 关闭“透明变体路由”。
+- **fork 0.4.1 · 全面评审加固：** 来源围栏完整对齐宿主 `/api` 边界（封堵 DNS rebinding、设置快照 GET 也纳入围栏），registry 更新精确固定版本，`.markdown` 产物可正常交付，透明路由在 DSH 0.2.0-rc 宿主上也能隐藏重复的模型条目（0.2.1–0.4.0 的完整列表见 [CHANGELOG.md](CHANGELOG.md)：桌面端来源修复、附加确认对话框与媒体粘贴、git 应用内更新、变体投票修复、Lexical 输入框粘贴适配）。
+- **fork 0.2.0 · 中继模型选择 + 能力矩阵：** 设置可从中继拉取模型目录（`GET /models`），每个模型带检测到的输入模态，按模型覆盖声明接受哪些输入。`vision_glance` 除图片外还接受视频、音频和文档，路由到 `video_url` / `input_audio` / `file`（或 `input_file` / Anthropic document）内容块；不支持的模态在发送任何字节之前以可操作的错误失败。
+- **2026-08-19 · 透明变体路由默认开启：** 模型选择器默认只显示每个模型一项并保留原模型名，粘贴图片、历史图片和内置 `read_image` 工具都能直接使用，不再需要手动切换到 `(Vision Toolkit)` 变体；如需恢复显式条目，可在 设置 → 高级设置 → 图片输入 关闭“保留原模型名并自动启用图片能力”。
 - **2026-08-16 · Windows Python：** 支持 Microsoft Store Python，解决 Windows 用户首次创建隔离环境失败的问题。
 - **2026-08-17 · 视觉升级：** 默认模型切换到 Gemini 3.7 Flash，并修复 Qwen/Gemini 检测框坐标顺序错位的问题。
 - **2026-08-16 · 图片粘贴：** 文本模型自动切换到 `(Vision Toolkit)` 变体并保留工作区路径，解决粘贴图片被拦截或后续无法复用的问题。
@@ -86,7 +107,7 @@ dsh plugin --profile web add github:GofMan5/dsh-vision-toolkit
   <img src="assets/dsh-view-example.png" width="82%" alt="DSH Web 中，纯文本 DeepSeek 模型通过 Vision Toolkit 回答用户粘贴图片里的内容" />
 </p>
 
-*用户粘贴一张图片，纯文本模型自动切换到对应的* `Vision Toolkit` *变体，并围绕用户的问题读取画面。*
+*用户粘贴一张图片，纯文本模型可以切换到对应的* `Vision Toolkit` *变体，并围绕用户的问题读取画面。*
 
 ### 从截图到可编辑页面
 
@@ -247,7 +268,7 @@ flowchart LR
       reasoningEffort: medium
 ```
 
-`reasoningEffort` 留空时使用模型或代理的默认值。常见值包括 `none`、`minimal`、`low`、`medium`、`high` 和 `xhigh`；为兼容第三方代理和未来扩展，该字段也接受由字母、数字、`.`、`_`、`-` 组成且不超过 64 位的提供方自定义值。实际支持范围与计费由模型或代理决定；较高强度可能增加推理 token、延迟和费用。Responses 请求会设置 `store: false`，但该标记不能替代核查服务商自己的数据保留政策。Web Settings 页面还可以调整超时、图片限制、并发、运行时和图片输入变体。
+`reasoningEffort` 留空时使用模型或代理的默认值。常见值包括 `none`、`minimal`、`low`、`medium`、`high` 和 `xhigh`；为兼容第三方代理和未来扩展，该字段也接受由字母、数字、`.`、`_`、`-` 组成且不超过 64 位的提供方自定义值。实际支持范围与计费由模型或代理决定；较高强度可能增加推理 token、延迟和费用。Responses 请求会设置 `store: false`，但该标记不能替代核查服务商自己的数据保留政策。Web Settings 页面覆盖视觉服务、运行时、超时、图片限制和图片输入变体的全部配置。
 Profile patch 还可以通过 `provider.headers` 配置非秘密的部署元数据。需要按会话路由的网关可在 `provider.sessionHeaders` 中列出一个或多个运行时生成的请求头；例如 OpenCode Zen 要求 `x-opencode-session`：
 
 ```yaml
@@ -281,7 +302,7 @@ Profile patch 还可以通过 `provider.headers` 配置非秘密的部署元数�
 | 问题 | 处理方式 |
 | --- | --- |
 | 视觉模型测试失败：`Vision API returned an incompatible response structure` | 通常是 API 地址少了路径前缀。LM Studio、Ollama 等本地 OpenAI 兼容服务需填写 `http://127.0.0.1:1234/v1`（带 `/v1`）；OpenAI Chat Completions 会拼接 `/chat/completions`，OpenAI Responses 会拼接 `/responses`，只填端口号可能命中未知端点 |
-| 粘贴图片后仍提示模型不支持图片 | 重启 Web Profile 并刷新页面，确认当前模型已切换到带 `(Vision Toolkit)` 的变体；也可以把图片先放进会话工作区，再调用 `/vision-skills` |
+| 粘贴图片后仍提示模型不支持图片 | 重启 Web Profile 并刷新页面后重新粘贴：输入框上方应出现附加确认卡片，确认后文件会作为 Vision Toolkit 引用附加；也可以把图片先放进会话工作区，再调用 `/vision-skills` |
 | 视觉服务提示 429 | 按错误中的 `Retry-After` 等待后重试；如果需要稳定高额度，切换到自己的视觉端点 |
 | 图片过大或像素超限 | 先裁剪或缩放图片；错误会明确显示是字节还是像素限制 |
 | 自定义 Credential 缺失 | 在 **设置 → 视觉工具** 填写 API Key，并确认 Credential 名称与配置一致 |

@@ -805,7 +805,11 @@ export async function labelTakeoverVerdict(ctx: Context, label: string): Promise
     }
     for (const model of models) {
       for (const candidate of [model.name, model.id]) {
-        if (typeof candidate !== 'string' || candidate.length === 0) continue
+        // The same length floor guards veto and confirmation alike: a one-
+        // or two-character name matches label prose far too easily, so a
+        // short image-capable id must not veto (and a short text-only id
+        // must not confirm) the verdict.
+        if (typeof candidate !== 'string' || candidate.length < 3) continue
         if (!lowered.includes(candidate.toLowerCase())) continue
         if (!shouldWrapModel(model)) {
           // An image-capable or unconfirmed model in the label keeps its
@@ -813,9 +817,7 @@ export async function labelTakeoverVerdict(ctx: Context, label: string): Promise
           // this plugin does not own.
           return false
         }
-        // Positive confirmation has a floor: one- and two-character names
-        // match label prose far too easily to identify the selected model.
-        if (candidate.length >= 3) matchedTextOnly = true
+        matchedTextOnly = true
       }
     }
   }
@@ -910,7 +912,10 @@ export function createPasteTakeoverResolver(
   }
   return async (sessionId, selection, modelLabel) => {
     if (selection !== undefined && selection.provider.trim() !== '' && selection.model.trim() !== '') {
-      const key = `route:${selection.provider}|${selection.model}`
+      // The effort rides in the autoSwitch verdict, so it belongs in the
+      // cache key: a changed effort within the TTL would otherwise answer
+      // with the stale one.
+      const key = `route:${selection.provider}|${selection.model}|${selection.reasoningEffort ?? ''}`
       const cached = routes.get(key)
       if (cached !== undefined && Date.now() - cached.at <= LABEL_VERDICT_TTL_MS) return cached.verdict
       const verdict = await routePasteVerdict(ctx, getConfig, selection)

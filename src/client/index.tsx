@@ -5,6 +5,7 @@
 
 import {
   useEffect,
+  useRef,
   useState,
   useSyncExternalStore,
   type ReactNode,
@@ -927,7 +928,9 @@ function GroundView({ block, openFile, t = key => en[key] }: ViewProps) {
   const grants = accessMap(value)
   return (
     <ToolShell block={block} title={t('groundTitle')} summary={matches.length > 0 ? `${target} · ${matches.length} ${t('matches')}` : target} icon={<VisionIcon kind="target" />} t={t}>
-      {value === undefined ? <p className="dvt-muted">{t('noResult')}</p> : (
+      {/* A still-running call has no result yet — and must not show the
+          failure copy reserved for settled-but-undecodable results. */}
+      {!('kind' in block) ? null : value === undefined ? <p className="dvt-muted">{t('noResult')}</p> : (
         <div className="dvt-stack">
           <div className="dvt-metrics">
             <div><span>{t('dimensions')}</span><strong>{width ?? '—'} × {height ?? '—'}</strong></div>
@@ -952,7 +955,9 @@ function DetectView({ block, openFile, t = key => en[key] }: ViewProps) {
   const grants = accessMap(value)
   return (
     <ToolShell block={block} title={t('detectTitle')} summary={`${elements.length} ${t('elements')}`} icon={<VisionIcon kind="layers" />} t={t}>
-      {value === undefined ? <p className="dvt-muted">{t('noResult')}</p> : (
+      {/* A still-running call has no result yet — and must not show the
+          failure copy reserved for settled-but-undecodable results. */}
+      {!('kind' in block) ? null : value === undefined ? <p className="dvt-muted">{t('noResult')}</p> : (
         <div className="dvt-stack">
           <div className="dvt-metrics">
             <div><span>{t('dimensions')}</span><strong>{width ?? '—'} × {height ?? '—'}</strong></div>
@@ -976,7 +981,7 @@ function TraceView({ block, openFile, t = key => en[key] }: ViewProps) {
   const grants = accessMap(value)
   return (
     <ToolShell block={block} title={t('traceTitle')} summary={summary} icon={<VisionIcon kind="shape" />} t={t}>
-      {artifact === undefined ? <p className="dvt-muted">{t('noResult')}</p> : <ArtifactPreview artifact={artifact} grant={grants.get(artifact.path)} openFile={openFile} t={t} />}
+      {!('kind' in block) ? null : artifact === undefined ? <p className="dvt-muted">{t('noResult')}</p> : <ArtifactPreview artifact={artifact} grant={grants.get(artifact.path)} openFile={openFile} t={t} />}
     </ToolShell>
   )
 }
@@ -990,7 +995,9 @@ function PixelDiffView({ block, openFile, t = key => en[key] }: ViewProps) {
   const grants = accessMap(value)
   return (
     <ToolShell block={block} title={t('pixelDiffTitle')} summary={pct === undefined ? undefined : `${pct.toFixed(3)}%`} icon={<VisionIcon kind="diff" />} t={t}>
-      {value === undefined ? <p className="dvt-muted">{t('noResult')}</p> : (
+      {/* A still-running call has no result yet — and must not show the
+          failure copy reserved for settled-but-undecodable results. */}
+      {!('kind' in block) ? null : value === undefined ? <p className="dvt-muted">{t('noResult')}</p> : (
         <div className="dvt-stack">
           <div className="dvt-diff-score"><span>{t('difference')}</span><strong>{pct?.toFixed(4) ?? '—'}%</strong><div><i style={{ width: `${Math.min(100, Math.max(0, pct ?? 0))}%` }} /></div></div>
           {regions.length === 0 ? null : <div><h4>{t('worstRegions')}</h4><ol className="dvt-list">{regions.map((region, index) => <li key={index}><span>{(numberOf(region.differencePct) ?? 0).toFixed(3)}%</span><code>{boxText(region.box)}</code></li>)}</ol></div>}
@@ -1013,7 +1020,7 @@ function ArtifactView({ block, openFile, toolName, t = key => en[key] }: ViewPro
           : t('artifactTitle')
   return (
     <ToolShell block={block} title={title} summary={artifacts.length > 0 ? `${artifacts.length} ${t('artifacts')}` : undefined} icon={<VisionIcon />} t={t}>
-      {artifacts.length === 0 ? <p className="dvt-muted">{t('noResult')}</p> : <div className="dvt-stack">{artifacts.map(artifact => <ArtifactPreview key={artifact.path} artifact={artifact} grant={grants.get(artifact.path)} openFile={openFile} t={t} />)}</div>}
+      {!('kind' in block) ? null : artifacts.length === 0 ? <p className="dvt-muted">{t('noResult')}</p> : <div className="dvt-stack">{artifacts.map(artifact => <ArtifactPreview key={artifact.path} artifact={artifact} grant={grants.get(artifact.path)} openFile={openFile} t={t} />)}</div>}
     </ToolShell>
   )
 }
@@ -1024,7 +1031,7 @@ function PaletteView({ block, t = key => en[key] }: ViewProps) {
   const colors = Array.isArray(analysis?.colors) ? analysis.colors.filter(isRecord) : []
   return (
     <ToolShell block={block} title={t('dominantColorsTitle')} summary={`${colors.length} ${t('colors')}`} icon={<VisionIcon kind="palette" />} t={t}>
-      {colors.length === 0 ? <p className="dvt-muted">{t('noResult')}</p> : <div className="dvt-palette">{colors.map((color, index) => {
+      {!('kind' in block) ? null : colors.length === 0 ? <p className="dvt-muted">{t('noResult')}</p> : <div className="dvt-palette">{colors.map((color, index) => {
         const hex = stringOf(color.color) ?? '#000000'
         const share = numberOf(color.sharePct)
         return <div key={`${hex}-${index}`}><i style={{ background: hex }} /><span><strong>{hex}</strong><small>{share === undefined ? '' : `${share.toFixed(2)}%`}</small></span></div>
@@ -1033,8 +1040,19 @@ function PaletteView({ block, t = key => en[key] }: ViewProps) {
   )
 }
 
-async function apiRequest<T>(init?: RequestInit): Promise<T> {
-  const response = await fetch(SETTINGS_ROUTE, { credentials: 'same-origin', ...init })
+/**
+ * One Settings-route request. `timeoutMs` bounds the tightly-deadlined
+ * actions (snapshot loads, catalog and update checks) so a dead server
+ * cannot pin the busy UI forever; long-by-design actions (health, save,
+ * apply-update, which may bootstrap the Python runtime or run pnpm) stay
+ * server-bounded and pass no timeout.
+ */
+async function apiRequest<T>(init?: RequestInit, timeoutMs?: number): Promise<T> {
+  const response = await fetch(SETTINGS_ROUTE, {
+    credentials: 'same-origin',
+    ...init,
+    ...(timeoutMs !== undefined && init?.signal === undefined ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
+  })
   const body = await response.json() as ApiSuccess<T> | ApiFailure
   if (!response.ok || !body.ok) {
     const failure = body as ApiFailure
@@ -1053,11 +1071,13 @@ interface SettingsState {
   action?: 'save' | 'health' | 'connection' | 'model' | 'list-models' | 'check-update' | 'apply-update' | undefined
   message?: string | undefined
   error?: string | undefined
+  /** Monotonic counter of user-requested reloads; a draft re-seed trigger beside the settings revision. */
+  reloadSeq: number
 }
 
 /** Small external store shared by the Settings route and pushed invalidations. */
 export class VisionSettingsController {
-  private state: SettingsState = { status: 'idle' }
+  private state: SettingsState = { status: 'idle', reloadSeq: 0 }
   private listeners = new Set<() => void>()
   private generation = 0
 
@@ -1073,18 +1093,29 @@ export class VisionSettingsController {
     for (const listener of this.listeners) listener()
   }
 
-  async load(): Promise<void> {
+  /**
+   * Load the Settings snapshot. An explicit (user-requested) load marks the
+   * result as authoritative so the form re-seeds even at an unchanged
+   * revision — after a rejected save, the server restores the last good
+   * generation under the same revision and the user expects Reload to
+   * discard their rejected draft. Background refreshes keep unsaved edits.
+   */
+  async load(explicit = false): Promise<void> {
     const generation = ++this.generation
     this.set({ ...this.state, status: 'loading', error: undefined, message: undefined })
     try {
-      const snapshot = await apiRequest<SettingsSnapshot>()
+      const snapshot = await apiRequest<SettingsSnapshot>(undefined, 30_000)
       if (generation !== this.generation) return
+      // Keep the loaded relay catalog: a background refresh (connection
+      // reset, credential update) must not make the model picker vanish.
       this.set({
         status: 'ready',
         snapshot,
         health: this.state.health,
         update: this.state.update,
         restart: this.state.restart,
+        models: this.state.models,
+        reloadSeq: explicit ? this.state.reloadSeq + 1 : this.state.reloadSeq,
       })
     } catch (error) {
       if (generation !== this.generation) return
@@ -1133,6 +1164,8 @@ export class VisionSettingsController {
             health: this.state.health,
             update: this.state.update,
             restart: this.state.restart,
+            models: this.state.models,
+            reloadSeq: this.state.reloadSeq,
             error: error instanceof Error ? error.message : String(error),
           })
           return false
@@ -1144,6 +1177,8 @@ export class VisionSettingsController {
         health: this.state.health,
         update: this.state.update,
         restart: this.state.restart,
+        models: this.state.models,
+        reloadSeq: this.state.reloadSeq,
         message: 'saved',
       })
       return true
@@ -1196,7 +1231,7 @@ export class VisionSettingsController {
             protocol: provider.protocol,
           },
         }),
-      })
+      }, 45_000)
       this.set({ ...this.state, action: undefined, models: catalog.models })
     } catch (error) {
       this.set({ ...this.state, action: undefined, error: error instanceof Error ? error.message : String(error) })
@@ -1210,7 +1245,7 @@ export class VisionSettingsController {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'check-update' }),
-      })
+      }, 60_000)
       this.set({ ...this.state, action: undefined, update })
     } catch (error) {
       this.set({ ...this.state, action: undefined, error: error instanceof Error ? error.message : String(error) })
@@ -1489,14 +1524,28 @@ function LoadedSettings({ controller, t }: SettingsInjected) {
   const state = useSyncExternalStore(controller.subscribe, controller.snapshot, controller.snapshot)
   const snapshot = state.snapshot
   const [draft, setDraft] = useState<Draft | undefined>(undefined)
+  const [seededRevision, setSeededRevision] = useState<number | undefined>(undefined)
+  const [seededReload, setSeededReload] = useState(0)
   const [apiKey, setApiKey] = useState('')
   const [draftError, setDraftError] = useState<string | undefined>(undefined)
   const [copiedCommand, setCopiedCommand] = useState(false)
+  const copyResetTimer = useRef<number | undefined>(undefined)
+  useEffect(() => () => {
+    if (copyResetTimer.current !== undefined) window.clearTimeout(copyResetTimer.current)
+  }, [])
 
   useEffect(() => { if (state.status === 'idle') void controller.load() }, [controller, state.status])
-  useEffect(() => {
-    if (snapshot !== undefined) setDraft(draftOf(snapshot.settings.value))
-  }, [snapshot])
+  if (snapshot !== undefined && (seededRevision !== snapshot.settings.revision || seededReload !== state.reloadSeq)) {
+    // Synchronous seed (the React derive-state-during-render pattern): the
+    // commit right after a successful load must not flash the error branch
+    // for a frame. Re-seeding follows two triggers — the server settings
+    // revision moving (our own save or an external one) and an explicit
+    // user reload — so background refreshes that changed neither (connection
+    // reset, credential update) keep unsaved edits.
+    setSeededRevision(snapshot.settings.revision)
+    setSeededReload(state.reloadSeq)
+    setDraft(draftOf(snapshot.settings.value))
+  }
   useEffect(() => {
     const restart = state.restart
     if (restart === undefined || !restart.restarting) return
@@ -1507,7 +1556,9 @@ function LoadedSettings({ controller, t }: SettingsInjected) {
       let outageSeen = false
       while (!cancelled && Date.now() < deadline) {
         try {
-          const current = await apiRequest<SettingsSnapshot>()
+          // Bounded per attempt: one hung probe must not stall the loop past
+          // its own deadline.
+          const current = await apiRequest<SettingsSnapshot>(undefined, 10_000)
           if (current.release.pluginVersion === restart.toVersion) {
             window.location.reload()
             return
@@ -1531,7 +1582,7 @@ function LoadedSettings({ controller, t }: SettingsInjected) {
     return <div className="dvt-settings"><div className="dvt-loading">{t('testing')}</div></div>
   }
   if (snapshot === undefined || draft === undefined) {
-    return <div className="dvt-settings"><div className="dvt-alert error">{state.error ?? t('runtimeUnavailable')}</div><Button variant="outline" onClick={() => { void controller.load() }}>{t('retry')}</Button></div>
+    return <div className="dvt-settings"><div className="dvt-alert error">{state.error ?? t('runtimeUnavailable')}</div><Button variant="outline" onClick={() => { void controller.load(true) }}>{t('retry')}</Button></div>
   }
 
   const update = <K extends keyof Draft>(key: K, value: Draft[K]): void => setDraft(current => current === undefined ? current : { ...current, [key]: value })
@@ -1624,7 +1675,8 @@ function LoadedSettings({ controller, t }: SettingsInjected) {
     void navigator.clipboard?.writeText(manualUpdateCommand)
       .then(() => {
         setCopiedCommand(true)
-        window.setTimeout(() => setCopiedCommand(false), 2_000)
+        if (copyResetTimer.current !== undefined) window.clearTimeout(copyResetTimer.current)
+        copyResetTimer.current = window.setTimeout(() => { copyResetTimer.current = undefined; setCopiedCommand(false) }, 2_000)
       })
       .catch(() => {})
   }
@@ -1695,7 +1747,7 @@ function LoadedSettings({ controller, t }: SettingsInjected) {
         </div>
       </section>
 
-      <div className="dvt-save-row"><Button variant="primary" disabled={!canSave || busy} onClick={save}>{state.action === 'save' ? t('saving') : t('save')}</Button><Button variant="outline" disabled={busy} onClick={() => { void controller.load() }}>{t('reload')}</Button></div>
+      <div className="dvt-save-row"><Button variant="primary" disabled={!canSave || busy} onClick={save}>{state.action === 'save' ? t('saving') : t('save')}</Button><Button variant="outline" disabled={busy} onClick={() => { void controller.load(true) }}>{t('reload')}</Button></div>
 
       <section className="dvt-panel"><div className="dvt-panel-title"><div><h3>{t('health')}</h3><p>{t('connectionHint')}</p></div><div className="dvt-actions"><Button size="sm" variant="outline" disabled={busy || !snapshot.runtime.ready} onClick={() => { void controller.runHealth('health') }}>{state.action === 'health' ? t('testing') : t('runHealth')}</Button><Button size="sm" variant="outline" disabled={busy || !snapshot.runtime.ready} onClick={() => { void controller.runHealth('connection') }}>{state.action === 'connection' ? t('testing') : t('testConnection')}</Button><Button size="sm" variant="primary" disabled={busy || !snapshot.runtime.ready} onClick={() => { void controller.runHealth('model') }}>{state.action === 'model' ? t('testingModel') : t('testModel')}</Button></div></div>
         <p className="dvt-muted">{t('saveBeforeTesting')}</p>
@@ -1841,12 +1893,9 @@ export function apply(ctx: ClientContext): void {
     const legacyRemote = ctx.remote as typeof ctx.remote & {
       $on?: (event: string, listener: (value: string) => void) => () => void
     }
-    const currentEvents = ctx as unknown as {
-      on(event: 'settings/changed', listener: (namespace: string) => void): () => void
-      on(event: 'credentials/changed', listener: (ref: string) => void): () => void
-    }
-    const disposers = typeof legacyRemote.$on === 'function'
-      ? [
+    const disposers: Array<() => void> = []
+    if (typeof legacyRemote.$on === 'function') {
+      disposers.push(
         legacyRemote.$on('settings/document-updated', refreshSettings),
         // DSH forwards `credentials/reference-updated` (payload: the credential
         // ref whose stored value committed) and never `credentials/updated`;
@@ -1854,15 +1903,11 @@ export function apply(ctx: ClientContext): void {
         // subscription. Both the 0.1.2-alpha.1 and 0.1.5 allowlists carry this
         // exact name, so one key covers every supported host.
         legacyRemote.$on('credentials/reference-updated', refreshCredential),
-      ]
-      : [
-        currentEvents.on('settings/changed', (namespace) => {
-          refreshSettings(namespace)
-        }),
-        currentEvents.on('credentials/changed', (ref) => {
-          refreshCredential(ref)
-        }),
-      ]
+      )
+    }
+    // No ctx-level twin events exist on any supported host generation: without
+    // `$on` there is no remote-event invalidation channel at all, and
+    // refreshes fall back to the connection/reset listener below.
     disposers.push(ctx.on('connection/reset', () => { controller.refreshIfLoaded() }))
     return () => { for (const dispose of disposers) dispose() }
   }, 'dsh-vision-toolkit: Settings invalidations')

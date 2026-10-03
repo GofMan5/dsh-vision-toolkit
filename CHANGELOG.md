@@ -4,6 +4,31 @@ All notable user-facing changes to DSH Vision Toolkit are documented in this fil
 
 ## [Unreleased]
 
+## [0.4.1] - fork
+
+### Fixed
+
+- **The origin fence now mirrors the host `/api` boundary completely.** Two holes the 0.2.1 fence left are closed: a DNS-rebound page (its domain resolving to this machine) made `Origin == Host` and passed every POST with a foreign Host — the Host is now required to be this machine's (loopback or one of its own interface addresses) before any Origin comparison, exactly like the host's trusted-authority step; and Origin-less requests with a non-loopback Host were trusted on a client-forgeable `Sec-Fetch-Site` value — the fetch-metadata header is no longer trust evidence. The Settings snapshot GET is fenced too (it was the only unfenced route; a rebound reader could read stored config and storage paths). Real clients are unaffected: the Desktop forwarder (loopback Host, no Origin), loopback browsers, and browsers reaching a `0.0.0.0` deployment through one of the machine's own addresses all still pass.
+- **Transparent routing hides duplicate model entries on DSH 0.2.0-rc hosts.** The model-variants hider keyed groups on `aria-labelledby` ids carrying the provider id — a 0.1.5 DOM shape. 0.2.0-rc selectors render a bare React `useId()` heading and put no provider id in the DOM at all, so the hider silently hid nothing and the selector showed the upstream text-only entry beside its same-named variant twin. Groups without provider identity now fall back to a structural rule: a same-heading pair with overlapping model names is the transparent-mode twin pair, and the earlier group's twinned entries hide (the variant always registers after the upstream it wraps). The 0.1.5 id path is unchanged.
+- **Registry installs update with `--save-exact`.** The forward install omitted it, so registry updates saved `^x.y.z` instead of the exact pin (and a checked-in test asserted it — invisible only because that test skips on Windows). Git installs stay commit-pinned and deliberately do not carry the flag.
+- **`.markdown` artifacts deliver.** `vision_long_screenshot_ocr` accepts the `.markdown` output extension, but the artifact route's MIME table had no entry for it, so every preview/download URL for such an artifact 404'd although the tool reported success.
+- **Paste-verdict cache key includes the reasoning effort.** Within the 15 s TTL, a query with a changed effort was answered with the cached `autoSwitch` verdict carrying the stale effort.
+- **The label-verdict veto has the same 3-character floor as confirmation.** A short image-capable model id matching label prose as a substring vetoed genuinely text-only selections — reproducing exactly the `MODEL_DOES_NOT_SUPPORT_IMAGES` paste failure the variant skip was built to prevent.
+- **`modelCapabilities` over-limit failures report the real cause.** With more than 128 valid entries, the dropped-entries check fired first and misreported valid entries as invalid; the count limit is now checked first, and case-collapsing keys (`{DUP, dup}`) fail loud instead of silently last-winning.
+- **Compressed-image staging no longer leaks `.partial` files** when the post-compression read/commit fails (abort or Windows EBUSY): the staged file is removed immediately instead of waiting for the hour-scale sweeper.
+- **Aborted artifact downloads release their file handle.** A client disconnect mid-transfer left the paused read stream's fd open until process exit; the stream is now destroyed when the response closes.
+- SemVer prerelease identifiers compare by ASCII code points, not `localeCompare`'s case-insensitive ordering.
+- A successful manual-restart-path update releases its lock before the best-effort backup cleanup, so a cleanup failure (Windows AV lock) can no longer route a verified install into the rollback path.
+- The relay model catalog body cap counts bytes, not UTF-16 code units.
+- `vision_glance`-family tool cards no longer show the “Structured result unavailable” failure copy while the tool is still running; the copy is reserved for settled results.
+- Settings fetches carry deadlines (snapshot 30 s, catalog 45 s, update check 60 s, restart probes 10 s), so a dead server cannot pin the busy UI forever; long-by-design actions (health, save, apply-update) stay server-bounded.
+- The Settings panel no longer flashes “Runtime unavailable” for one frame after a successful load, background refreshes no longer discard unsaved Settings edits (a re-seed happens only on a settings revision change or an explicit Reload), and the loaded relay model catalog survives reloads and background refreshes.
+- The browser no longer subscribes to ctx events that exist on no supported host generation; the paste reference codec answers with the chip's exact paste-time label.
+
+### Changed
+
+- DSH compatibility metadata: `dsh.compatibility.dsh` now mirrors the exact peer-dependency range (the previous range did not admit several prerelease lines the `dshReleases` table declares compatible).
+
 ## [0.4.0] - fork
 
 ### Fixed
@@ -545,7 +570,14 @@ This release marks the fork's first feature set on top of upstream 0.1.46: the v
 - Runtime teardown cancels in-flight operations before removing Agent-scoped tools, the activation bootstrap, and the Skill.
 - The Web client is published through the current nested `dsh.client` manifest and loader-compatible built artifact required by DSH snapshot0810.
 
-[Unreleased]: https://github.com/Anionex/dsh-vision-toolkit/compare/v0.1.46...HEAD
+[Unreleased]: https://github.com/GofMan5/dsh-vision-toolkit/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/GofMan5/dsh-vision-toolkit/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/GofMan5/dsh-vision-toolkit/compare/v0.3.2...v0.4.0
+[0.3.2]: https://github.com/GofMan5/dsh-vision-toolkit/compare/v0.3.1...v0.3.2
+[0.3.1]: https://github.com/GofMan5/dsh-vision-toolkit/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/GofMan5/dsh-vision-toolkit/compare/v0.2.1...v0.3.0
+[0.2.1]: https://github.com/GofMan5/dsh-vision-toolkit/compare/v0.2.0...v0.2.1
+[0.2.0]: https://github.com/GofMan5/dsh-vision-toolkit/compare/v0.1.46...v0.2.0
 [0.1.46]: https://github.com/Anionex/dsh-vision-toolkit/compare/v0.1.45...v0.1.46
 [0.1.45]: https://github.com/Anionex/dsh-vision-toolkit/compare/v0.1.44...v0.1.45
 [0.1.44]: https://github.com/Anionex/dsh-vision-toolkit/compare/v0.1.43...v0.1.44

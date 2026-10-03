@@ -7,11 +7,19 @@
  * images, and the built-in `read_image` tool all keep working on text-only
  * models without exposing `(Vision Toolkit)` routes.
  *
- * The host selector renders one `[role=group]` per provider whose group title
- * id is `:<react-radix>:-<providerId>`, and one `[role=menuitemradio]` per
- * model. We key groups by that provider id (variant routes carry the
- * `vision-toolkit-` prefix) and hide every upstream entry whose display name
- * matches a variant twin, collapsing fully-hidden upstream groups.
+ * The host selector renders one `[role=group]` per provider whose heading is
+ * addressed by `aria-labelledby`. Two host generations put different identity
+ * into that DOM:
+ * - 0.1.5 hosts suffix the provider id onto the React heading id
+ *   (`:rN:-<providerId>`), so groups are keyed by provider id and variant
+ *   routes are recognized by the `vision-toolkit-` prefix;
+ * - 0.2.0-rc hosts render a bare React `useId()` heading and carry no
+ *   provider id in the DOM at all, so identity falls back to structure: in
+ *   transparent mode a variant group repeats the upstream provider display
+ *   name (the heading text) and the wrapped models' names, and the variant
+ *   always registers AFTER the upstream it wraps — so a same-heading pair
+ *   whose model names overlap is the twin pair, and the EARLIER group's
+ *   twinned entries hide while the later (image-capable) group stays.
  *
  * The hiding decision is purely DOM-local: transparent mode is exactly the
  * case where a variant twin keeps the upstream display name, while explicit
@@ -31,13 +39,19 @@ let active = false
 let observer: MutationObserver | undefined
 let tidyQueued = false
 
-/** Derive the provider id from a group's `aria-labelledby` title id. */
+/**
+ * Derive the provider id from a group's `aria-labelledby` title id. 0.1.5
+ * hosts embed it as `:rN:-<providerId>` (or a `-`-prefixed id); a bare
+ * React `useId()` (0.2.0-rc hosts) carries no provider identity at all and
+ * answers undefined so the structural fallback takes over.
+ */
 function providerIdOf(group: Element): string | undefined {
   const labelledBy = group.getAttribute('aria-labelledby')
   if (labelledBy === null || labelledBy === '') return undefined
   const titleId = document.getElementById(labelledBy)?.id ?? labelledBy
   const reactPrefixed = /^:[^:]+:-(.+)$/u.exec(titleId)
   if (reactPrefixed !== null) return reactPrefixed[1]
+  if (/^:[^:]+:$/u.test(titleId)) return undefined
   return titleId.replace(/^-/u, '')
 }
 
@@ -61,8 +75,10 @@ function restoreHidden(): void {
 
 /**
  * Hide upstream text-only entries that have a variant twin. Group keys come
- * from `aria-labelledby` ids so provider identity is reliable even when the
- * variant provider name equals the upstream name (transparent mode).
+ * from `aria-labelledby` ids where the host provides them (provider
+ * identity is reliable even when the variant provider name equals the
+ * upstream name — transparent mode); 0.2.0-rc groups without provider ids
+ * fall back to the same-heading twin-pair rule.
  */
 export function tidyModelSelector(): void {
   if (document.querySelector('[role="menu"]') === null) return
@@ -73,9 +89,14 @@ export function tidyModelSelector(): void {
   }
   const groups = [...document.querySelectorAll<HTMLElement>('[role="menu"] [role="group"]')]
   const byProvider = new Map<string, HTMLElement[]>()
+  const unidentified: Array<{ element: HTMLElement; heading: string; names: string[] }> = []
   for (const group of groups) {
     const provider = providerIdOf(group)
-    if (provider === undefined) continue
+    if (provider === undefined) {
+      const heading = (document.getElementById(group.getAttribute('aria-labelledby') ?? '')?.textContent ?? '').trim()
+      unidentified.push({ element: group, heading, names: modelNames(group) })
+      continue
+    }
     const entries = byProvider.get(provider)
     if (entries === undefined) byProvider.set(provider, [group])
     else entries.push(group)
@@ -99,6 +120,29 @@ export function tidyModelSelector(): void {
       // Collapse the whole group only when every model has a variant twin;
       // otherwise a partially matched group keeps its unmatched entries.
       if (matched.length === buttons.length) shouldHide.add(upstreamGroup)
+    }
+  }
+
+  // 0.2.0-rc structural fallback: a same-heading pair whose model names
+  // overlap is the transparent-mode upstream/variant twin pair. The variant
+  // registers after the upstream it wraps, so the later group is the
+  // image-capable twin and the earlier group's twinned entries hide.
+  for (let i = 0; i < unidentified.length; i += 1) {
+    const earlier = unidentified[i]
+    if (earlier === undefined || earlier.heading === '') continue
+    for (let j = i + 1; j < unidentified.length; j += 1) {
+      const later = unidentified[j]
+      if (later === undefined || earlier.heading !== later.heading) continue
+      const laterNames = new Set(later.names)
+      if (laterNames.size === 0) continue
+      const buttons = [...earlier.element.querySelectorAll<HTMLElement>('[role="menuitemradio"]')]
+      const matched = buttons
+        .map(button => [button, (button.title || (button.textContent ?? '')).trim()] as const)
+        .filter(([, name]) => laterNames.has(name))
+        .map(([button]) => button)
+      if (matched.length === 0) continue
+      for (const button of matched) shouldHide.add(button)
+      if (matched.length === buttons.length) shouldHide.add(earlier.element)
     }
   }
 

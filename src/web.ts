@@ -52,7 +52,6 @@ import {
 } from './runtime-manager.ts'
 import { PLUGIN_VERSION, UPSTREAM_COMMIT, UPSTREAM_REPOSITORY, UPSTREAM_VERSION } from './version.ts'
 import { sameOriginPost, sameOriginRequest } from './web-request.ts'
-
 /** Exact route used by the browser Settings page. */
 export const SETTINGS_ROUTE = '/_dsh/vision-toolkit/settings'
 
@@ -469,6 +468,13 @@ export class VisionToolkitWebBackend {
 
   /** Handle the exact Settings route. */
   async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    // Method-agnostic fence, matching paste-policy/display-config: a
+    // DNS-rebound reader must not reach the snapshot (stored config,
+    // storage paths, runtime status) any more than a state-changing POST.
+    if (!sameOriginRequest(req)) {
+      requestError(res, 403, 'origin-rejected', 'The request must originate from this DSH Web application')
+      return
+    }
     if (req.method === 'GET') {
       try {
         responseJson(res, 200, { ok: true, value: await this.snapshot() })

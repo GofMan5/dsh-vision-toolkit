@@ -42,6 +42,33 @@ function explicitMenuHtml(): string {
   `
 }
 
+/**
+ * The 0.2.0-rc selector shape: MenuGroup headings are bare React useIds and
+ * no provider id reaches the DOM. Transparent mode renders the variant group
+ * AFTER the upstream with the same heading text and the same model names —
+ * the structural twin-pair rule must hide the earlier group's twinned
+ * entries.
+ */
+function modernMenuHtml(): string {
+  return `
+    <div role="menu">
+      <section role="group" aria-labelledby=":r1:">
+        <div id=":r1:">DeepSeek</div>
+        <button role="menuitemradio" title="DeepSeek-V4-Flash"><span>DeepSeek-V4-Flash</span></button>
+        <button role="menuitemradio" title="DeepSeek-V4-Pro"><span>DeepSeek-V4-Pro</span></button>
+      </section>
+      <section role="group" aria-labelledby=":r3:">
+        <div id=":r3:">openai</div>
+        <button role="menuitemradio" title="GPT-5.6 Sol"><span>GPT-5.6 Sol</span></button>
+      </section>
+      <section role="group" aria-labelledby=":r5:">
+        <div id=":r5:">DeepSeek</div>
+        <button role="menuitemradio" title="DeepSeek-V4-Flash"><span>DeepSeek-V4-Flash</span></button>
+      </section>
+    </div>
+  `
+}
+
 function buttons(title: string): HTMLElement[] {
   return [...document.querySelectorAll<HTMLElement>(`[role="menuitemradio"][title="${title}"]`)]
 }
@@ -63,6 +90,23 @@ describe('tidyModelSelector', () => {
     expect(upstream.style.display).toBe('none')
     const unrelated = document.querySelector('[aria-labelledby=":r2:-openai"]') as HTMLElement
     expect(unrelated.style.display).toBe('')
+    expect(buttons('GPT-5.6 Sol')[0]!.style.display).toBe('')
+  })
+
+  it('hides the earlier same-heading twin pair when the selector DOM carries no provider ids (0.2.0-rc shape)', () => {
+    document.body.innerHTML = modernMenuHtml()
+    tidyModelSelector()
+
+    // The upstream group's twinned entry hides; its unmatched model stays.
+    expect(buttons('DeepSeek-V4-Flash')[0]!.style.display).toBe('none')
+    expect(buttons('DeepSeek-V4-Pro')[0]!.style.display).toBe('')
+    const upstream = document.querySelector('[aria-labelledby=":r1:"]') as HTMLElement
+    expect(upstream.style.display).toBe('')
+    // The later (image-capable) twin stays fully visible.
+    expect(buttons('DeepSeek-V4-Flash')[1]!.style.display).toBe('')
+    const variant = document.querySelector('[aria-labelledby=":r5:"]') as HTMLElement
+    expect(variant.style.display).toBe('')
+    // Unrelated groups are untouched.
     expect(buttons('GPT-5.6 Sol')[0]!.style.display).toBe('')
   })
 

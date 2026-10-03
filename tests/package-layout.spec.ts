@@ -78,7 +78,11 @@ describe('package layout contract', () => {
 
   it('declares the exact DSH release window and runtime compatibility contract', () => {
     expect(PACKAGE.engines?.node).toBe('^22.19.0 || >=24.0.0')
-    expect(PACKAGE.dsh?.compatibility?.dsh).toBe('>=0.1.0-rc.8 <0.2.0 || 0.2.0-rc.2')
+    // The compatibility range mirrors the peerDependencies range exactly:
+    // strict semver prerelease rules would otherwise not admit several
+    // prerelease lines the dshReleases table below declares compatible.
+    expect(PACKAGE.dsh?.compatibility?.dsh).toBe('>=0.1.0-rc.8 <0.2.0 || ^0.1.1-rc.1 || ^0.1.2-alpha.1 || ^0.1.5-rc.1 || 0.2.0-rc.2')
+    expect(PACKAGE.peerDependencies?.['@deepseek-ai/dsh-llm']).toBe(PACKAGE.dsh?.compatibility?.dsh)
     expect(PACKAGE.dsh?.compatibility?.profiles).toEqual(['web', 'headless'])
     // DSH STORE reads the official latest-three window per release and needs at
     // least one exact `compatible` verdict; a range alone is not installable evidence.

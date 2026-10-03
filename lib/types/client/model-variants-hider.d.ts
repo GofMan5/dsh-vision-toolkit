@@ -7,11 +7,19 @@
  * images, and the built-in `read_image` tool all keep working on text-only
  * models without exposing `(Vision Toolkit)` routes.
  *
- * The host selector renders one `[role=group]` per provider whose group title
- * id is `:<react-radix>:-<providerId>`, and one `[role=menuitemradio]` per
- * model. We key groups by that provider id (variant routes carry the
- * `vision-toolkit-` prefix) and hide every upstream entry whose display name
- * matches a variant twin, collapsing fully-hidden upstream groups.
+ * The host selector renders one `[role=group]` per provider whose heading is
+ * addressed by `aria-labelledby`. Two host generations put different identity
+ * into that DOM:
+ * - 0.1.5 hosts suffix the provider id onto the React heading id
+ *   (`:rN:-<providerId>`), so groups are keyed by provider id and variant
+ *   routes are recognized by the `vision-toolkit-` prefix;
+ * - 0.2.0-rc hosts render a bare React `useId()` heading and carry no
+ *   provider id in the DOM at all, so identity falls back to structure: in
+ *   transparent mode a variant group repeats the upstream provider display
+ *   name (the heading text) and the wrapped models' names, and the variant
+ *   always registers AFTER the upstream it wraps — so a same-heading pair
+ *   whose model names overlap is the twin pair, and the EARLIER group's
+ *   twinned entries hide while the later (image-capable) group stays.
  *
  * The hiding decision is purely DOM-local: transparent mode is exactly the
  * case where a variant twin keeps the upstream display name, while explicit
@@ -23,8 +31,10 @@
  */
 /**
  * Hide upstream text-only entries that have a variant twin. Group keys come
- * from `aria-labelledby` ids so provider identity is reliable even when the
- * variant provider name equals the upstream name (transparent mode).
+ * from `aria-labelledby` ids where the host provides them (provider
+ * identity is reliable even when the variant provider name equals the
+ * upstream name — transparent mode); 0.2.0-rc groups without provider ids
+ * fall back to the same-heading twin-pair rule.
  */
 export declare function tidyModelSelector(): void;
 /**
