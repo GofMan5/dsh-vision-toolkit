@@ -110,6 +110,8 @@ function parsePayload(value: unknown): ArtifactTokenPayload | undefined {
     || typeof value.path !== 'string'
     || !isAbsolute(value.path)
     || typeof value.filename !== 'string'
+    || !value.path.isWellFormed()
+    || !value.filename.isWellFormed()
     || basename(value.path) !== value.filename
     || typeof value.mimeType !== 'string'
     || !isArtifactKind(value.kind)
@@ -392,24 +394,28 @@ export class ArtifactAccessController {
       res.end()
       return
     }
-    securityHeaders(res, payload, downloadValue === '1')
-    res.writeHead(200)
-    if (req.method === 'HEAD') {
+    try {
+      securityHeaders(res, payload, downloadValue === '1')
+      res.writeHead(200)
+      if (req.method === 'HEAD') {
+        await opened.handle.close().catch(() => {})
+        res.end()
+        return
+      }
+      const stream = opened.handle.createReadStream({ autoClose: true })
+      stream.on('error', () => {
+        if (!res.headersSent) res.writeHead(500)
+        res.destroy()
+      })
+      // A client abort mid-transfer leaves the paused stream's file handle
+      // open (pipe only unpipes); destroying it lets autoClose release it.
+      res.on('close', () => {
+        if (!stream.readableEnded) stream.destroy()
+      })
+      stream.pipe(res)
+    } catch (error) {
       await opened.handle.close().catch(() => {})
-      res.end()
-      return
+      throw error
     }
-    const stream = opened.handle.createReadStream({ autoClose: true })
-    stream.on('error', () => {
-      if (!res.headersSent) res.writeHead(500)
-      res.destroy()
-    })
-    stream.pipe(res)
-    // A client abort mid-transfer leaves the paused stream's file handle
-    // open (pipe only unpipes); destroying it on close lets autoClose
-    // release the handle.
-    res.on('close', () => {
-      if (!stream.readableEnded) stream.destroy()
-    })
   }
 }

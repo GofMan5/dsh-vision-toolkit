@@ -31,6 +31,25 @@ const COMMAND_OUTPUT_BYTES = 128 * 1024
 const SETTINGS_ROUTE = '/_dsh/vision-toolkit/settings'
 const UPDATE_LOCK_FILE = '.dsh-vision-toolkit-update.lock'
 
+// The Host subprocess seam has no windowsVerbatimArguments option. Keep its
+// output/termination management, and let a tiny Node child launch batch shims.
+const WINDOWS_PNPM_LAUNCHER_SOURCE = String.raw`
+const { spawn } = require('node:child_process')
+const [file, ...args] = process.argv.slice(1)
+if ([file, ...args].some(value => /[\r\n]/.test(value))) throw new Error('Batch command cannot contain line breaks')
+const escape = value => value.replace(/[()\][%!^"\x60<>&|;, *?]/g, '^$&')
+const quote = value => escape(escape('"' + value
+  .replace(/\\+/g, (slashes, offset, text) => offset + slashes.length === text.length || text[offset + slashes.length] === '"' ? slashes.repeat(2) : slashes)
+  .replace(/"/g, '\\"') + '"'))
+// Arguments cross two cmd parses: invocation, then the shim's %* forwarding.
+const command = '"' + [escape(file), ...args.map(quote)].join(' ') + '"'
+const child = spawn(process.env.COMSPEC || 'cmd.exe', ['/d', '/s', '/v:off', '/c', command], {
+  stdio: 'inherit', windowsHide: true, windowsVerbatimArguments: true,
+})
+child.once('error', error => { console.error(error); process.exit(1) })
+child.once('exit', code => { process.exit(code === null ? 1 : code) })
+`
+
 export type PluginUpdateUnavailableReason =
   | 'profile-not-found'
   | 'not-direct-dependency'
@@ -744,6 +763,7 @@ export class VisionToolkitPluginUpdateService {
   private readonly runtimeReady: () => boolean
   private readonly platform: NodeJS.Platform
   private updating = false
+  private manualRestartRequired = false
 
   constructor(
     private readonly ctx: Pick<Context, 'subprocess'>,
@@ -878,6 +898,7 @@ export class VisionToolkitPluginUpdateService {
           dependencySpec: profile.dependencySpec,
           reason: 'profile-read-only',
         },
+        ...(gitSource === undefined ? {} : { gitSource }),
       }
     }
     // Replacing the installed package is safe even when this Web process cannot
@@ -935,13 +956,9 @@ export class VisionToolkitPluginUpdateService {
     profile: ProfileInstall,
     pnpmPath: string,
   ): Promise<CommandResult> {
-    // Windows batch shims cannot be spawned directly; route them through cmd.exe.
-    const program = this.platform === 'win32' && /\.(?:cmd|bat)$/i.test(pnpmPath)
-      ? process.env.COMSPEC ?? 'cmd.exe'
-      : pnpmPath
-    const argv = program === pnpmPath
-      ? [pnpmPath, ...args]
-      : [program, '/d', '/s', '/c', pnpmPath, ...args]
+    const argv = this.platform === 'win32' && /\.(?:cmd|bat)$/i.test(pnpmPath)
+      ? [process.execPath, '-e', WINDOWS_PNPM_LAUNCHER_SOURCE, pnpmPath, ...args]
+      : [pnpmPath, ...args]
     const controller = new AbortController()
     let timedOut = false
     const timeout = setTimeout(() => {
@@ -1101,6 +1118,7 @@ export class VisionToolkitPluginUpdateService {
 
   /** Install the currently published version, then restart when this process can do so safely. */
   async installAndRestart(expectedVersion: string): Promise<PluginUpdateResult> {
+    if (this.manualRestartRequired) throw new PluginUpdateError('restart-required', 'Restart DSH Web before installing another plugin update')
     if (this.updating) throw new PluginUpdateError('update-in-progress', 'A plugin update is already in progress')
     this.updating = true
     let locked: { path: string; token: string; release: () => Promise<void> } | undefined
@@ -1168,10 +1186,10 @@ export class VisionToolkitPluginUpdateService {
 
       const healthUrl = this.healthUrl
       if (this.platform === 'win32' || !this.allowDetachedRestart || healthUrl === undefined) {
-        // The install is verified and the lock is the only thing holding the
-        // next update back: release it before the best-effort backup
-        // cleanup, so a cleanup failure (e.g. a Windows AV lock) can never
-        // route a successful update into the rollback path.
+        // The verified install cannot be replaced again while this process
+        // still runs the old version. Fence repeats before releasing the lock;
+        // best-effort backup cleanup must not trigger rollback of a good install.
+        this.manualRestartRequired = true
         const backup = updateBackup
         updateBackup = undefined
         await locked.release()

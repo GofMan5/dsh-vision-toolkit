@@ -12,7 +12,7 @@ export default defineConfig({
     },
   },
   test: {
-    include: ['tests/**/*.spec.ts'],
+    include: ['tests/**/*.spec.{ts,tsx}'],
     environment: 'node',
     // Runtime-install tests temporarily own process-wide DSH_HOME, while the
     // real-profile acceptance launches `dsh` children from that environment.

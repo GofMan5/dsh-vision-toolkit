@@ -1,4 +1,4 @@
-import { readFile, stat } from 'node:fs/promises'
+import { readdir, readFile, stat } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
@@ -215,6 +215,31 @@ describe('package layout contract', () => {
       const wrapperLine = outputLines.indexOf(wrapper)
       expect(wrapperLine, source).toBeGreaterThanOrEqual(0)
       expect(section.offset).toEqual({ line: wrapperLine + 1, column: 0 })
+    }
+  })
+
+  it('declares every dsh service its sources read directly on ctx', async () => {
+    // Cordis refuses undeclared service reads with the runtime error
+    // "cannot get property X without inject"; the entry `inject` export is the
+    // plugin's declaration. Scan the plugin sources for direct `ctx.<name>`
+    // reads and require each to be declared. Fiber scopes (ctx.inject) are
+    // named `*Ctx`/`scope` and stay exempt; the client plugin has its own
+    // inject contract under `dsh.client.inject`.
+    const CORDIS_CTX_API = new Set(['on', 'off', 'inject', 'get', 'logger', 'effect'])
+    const dir = await readdir(join(ROOT, 'src'))
+    const accessed = new Set<string>()
+    for (const file of dir.filter(name => name.endsWith('.ts'))) {
+      const text = await readFile(join(ROOT, 'src', file), 'utf8')
+      for (const match of text.matchAll(/\bctx\.([A-Za-z_$][\w$]*)/gu)) accessed.add(match[1]!)
+    }
+    const entry = await readFile(join(ROOT, 'src', 'index.ts'), 'utf8')
+    const entryInject = entry.match(/export const inject = \[([^\]]*)\]/)?.[1] ?? ''
+    const built = await readFile(join(ROOT, 'lib', 'index.js'), 'utf8')
+    const builtInject = built.match(/export const inject = \[([^\]]*)\]/)?.[1] ?? ''
+    for (const name of accessed) {
+      if (CORDIS_CTX_API.has(name)) continue
+      expect(entryInject, `ctx.${name} is read but not declared in the entry inject`).toContain(`'${name}'`)
+      expect(builtInject, `built entry lost the ctx.${name} declaration; rebuild`).toContain(`'${name}'`)
     }
   })
 })

@@ -4,6 +4,29 @@ All notable user-facing changes to DSH Vision Toolkit are documented in this fil
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-07
+
+### Added
+
+- Per-session persistent media controls (whole session and image/video/audio/document toggles), proxy/direct routing, and an opt-in current-model native image-generation switch.
+- Allowlisted native relay dispatch using the selected conversation model, with Responses `image_generation`, durable generated image attachments/artifacts, tool-result image transport, bounded SSE/JSON decoding, and explicit protocol limitations.
+- Outbound session-history consent enforcement without changing durable transcripts; session-scoped paste confirmations and cached pasted-media evidence.
+
+### Fixed
+
+- Native relay failures preserve safe categories (context overflow, quota, authentication, rate limits, relay timeout/server errors, rejected request parameters) and HTTP status rather than collapsing to `Relay request failed`. Error bodies are capped at 16 KiB; raw upstream messages/codes are not reflected. Context overflow retains the Host's compaction code; Host caller timeouts are distinct from cancellation and the plugin's idle deadline. Transient native codes do not opt potentially billed generation into normal automatic retries.
+- Native conversation/generation streams no longer inherit the visual tool's 30-second whole-request deadline: bounded idle waits reset on streamed bytes/keepalives (at least 120 seconds for native chat, 300 seconds with image generation), with timers cleaned on completion, cancellation, and iterator disposal. Replacement native wires now emit Host terminal error/aborted chunks; empty completions are explicit errors rather than silent stops. SSE event-header-only Responses relays are supported. No automatic fallback/resubmission is introduced for potentially paid generation.
+- Session media controls now use a compact collapsed row, short bounded select labels, responsive modality columns, and on-demand protocol/help details. The row carries composer-aligned width/margins directly so a late/missing plugin stylesheet cannot strand it at the viewport edge. Switching sessions closes the panel; save/consent behavior is unchanged.
+- Review R01–R06: administrative Web routes now require Host authentication and fail closed (`503`) if its API is unavailable; automatic paste projection requires session/file-bound server signatures; delayed consent persistence preserves live opt-outs. Credentialed catalog, health and Python requests reject redirects. Catalog errors redact credentials before truncation and response bodies are capped while streaming.
+- Review R07–R12: compression cache eviction retains newest entries and pins in-flight files across runtime generations; output aliases cannot overwrite inputs on Windows or through hard links. The Python adapter emits standard PDF filename/file-data and MP3 format fields without changing the pinned vendor. Proxy image admission uses its preprocessing ceiling rather than the direct wire ceiling; projected/variant evidence is not converted twice. Restored native Skill exposure recognizes the Host 0.2 raw tool-result shape as well as legacy history.
+- Review R13–R17/R24: Settings watching starts before startup awaits and reconciles buffered changes; rejected projected configurations no longer block unrelated valid repairs. Late storage-domain binding merges retained roots and reconciles the active runtime. Windows updater shims handle spaced/metacharacter paths, successful manual installs require restart before a second attempt, and read-only GitHub checks retain the GitHub source.
+- Review R18–R23/R25: stale Settings GETs cannot overwrite Save; paste-policy refreshes keep known media opt-outs; attach confirmation is session-bound. Cleared/settled paste batches release File graphs and listeners while preserving detached retries in a bounded string-only cache. Cancelled weighted queue heads wake eligible followers. Same-scope model drafts retain provider metadata without forwarding it to a changed destination. Invalid Unicode output names are rejected and artifact setup failures close open handles.
+- Compatibility: unsigned historical paste markers are text-only for automatic routing; re-paste or use explicit visual tools. Older Hosts without the authentication API lose administrative Web routes rather than silently accepting anonymous requests. Cache coordination is process-local; transport retry fallback retains at most 256 copied references without Files/progress docks. No installed profile migration or live deployment is performed by this source change.
+- Native streams now stop at Responses terminal events or Chat `[DONE]` instead of waiting for transport EOF, decode all SSE line endings across network boundaries, and reject nonterminal/cancelled Responses, filtered output, and Chat error envelopes. Final text and refusal content are reconciled per content part without loss or duplication. Failed or aborted generated-image writes remove only files owned by the operation and preserve the original error; host attachments are committed only after artifact validation.
+- Malformed tool-result history is rejected before media reads or relay dispatch, preventing missing, non-string, or blank call IDs from leaking `role:'tool'` into Responses.
+- **The direct wire serializes DSH 0.2 tool results.** DSH 0.2 hosts deliver tool results as `role:'tool'` messages carrying the raw result blocks; 0.1.5 wrapped the same blocks in a `tool-result` block. The direct wire only understood the 0.1.5 shape, so on a 0.2.0-rc host every conversation with tool history echoed `{"role":"tool"}` into the Responses `input` list — Responses-native upstreams reject that item (`Invalid value: 'tool'`, `param: input[N]`), and the turn failed with `Relay Responses request failed` after the relay's sanitized retry ladder. `nativeMessages` now serializes the 0.2 message shape into `function_call_output` items (Chat protocol: `role:'tool'` with `tool_call_id`) through the same emitter the 0.1.5 block shape uses, with tool-returned images still shipped as the labeled untrusted-evidence user message.
+- **The entry `inject` declares `llm` and `attachments`.** The session-media routing wire reads `ctx.llm` (model info, redispatch, `fileRequestText`) and `ctx.attachments` (image reads, generated-image saves, file streams) directly on the plugin context, but the entry never declared either service — cordis refuses undeclared reads, so every turn in a Session with media controls enabled failed with `This turn failed: cannot get property "llm"/"attachments" without inject`. Both services ship in the DSH base bundle, so the declaration is a pure ordering/waiting contract, not a new host requirement. A package-layout test now scans the plugin sources for direct `ctx.<service>` reads and fails when one is missing from the entry `inject` (or from the built artifact); the media-routing tests route their fake context through the real declaration and reproduce the literal runtime error on regression.
+
 ## [0.4.1] - fork
 
 ### Fixed
@@ -570,7 +593,8 @@ This release marks the fork's first feature set on top of upstream 0.1.46: the v
 - Runtime teardown cancels in-flight operations before removing Agent-scoped tools, the activation bootstrap, and the Skill.
 - The Web client is published through the current nested `dsh.client` manifest and loader-compatible built artifact required by DSH snapshot0810.
 
-[Unreleased]: https://github.com/GofMan5/dsh-vision-toolkit/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/GofMan5/dsh-vision-toolkit/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/GofMan5/dsh-vision-toolkit/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/GofMan5/dsh-vision-toolkit/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/GofMan5/dsh-vision-toolkit/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/GofMan5/dsh-vision-toolkit/compare/v0.3.1...v0.3.2

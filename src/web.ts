@@ -10,7 +10,8 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { CredentialInfo, CredentialRef } from '@deepseek-ai/dsh-credentials'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { SettingsConflictError, type SettingsDescriptor } from '@deepseek-ai/dsh-settings'
-// Type-only import activates the optional webServer Context declaration.
+// Type-only imports activate optional host service Context declarations.
+import type {} from '@deepseek-ai/dsh-client-connection'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { ArtifactAccessController, ARTIFACT_ROUTE_PREFIX } from './artifact-access.ts'
 import {
@@ -52,6 +53,7 @@ import {
 } from './runtime-manager.ts'
 import { PLUGIN_VERSION, UPSTREAM_COMMIT, UPSTREAM_REPOSITORY, UPSTREAM_VERSION } from './version.ts'
 import { sameOriginPost, sameOriginRequest } from './web-request.ts'
+import { SESSION_MEDIA_ROUTE, type SessionMediaStore } from './session-media.ts'
 /** Exact route used by the browser Settings page. */
 export const SETTINGS_ROUTE = '/_dsh/vision-toolkit/settings'
 
@@ -447,11 +449,13 @@ export class VisionToolkitWebBackend {
    * boundary instead of silently listing the previous provider.
    */
   private async listModels(draft: ListModelsRequest['provider']): Promise<RelayModelCatalog> {
-    let provider: ResolvedVisionToolkitConfig['provider']
+    const saved = resolveConfig(descriptorOf(this.ctx).value as VisionToolkitConfig).provider
+    let provider = saved
     if (draft !== undefined && Object.keys(draft).length > 0) {
-      provider = resolveConfig({ provider: draft }).provider
-    } else {
-      provider = resolveConfig(descriptorOf(this.ctx).value as VisionToolkitConfig).provider
+      const candidate = resolveConfig({ provider: { baseUrl: saved.baseUrl, credential: saved.credential, protocol: saved.protocol, ...draft } }).provider
+      // Destination-scoped metadata must never follow a changed relay or credential.
+      const sameScope = candidate.baseUrl === saved.baseUrl && candidate.credential === saved.credential && candidate.protocol === saved.protocol
+      provider = sameScope ? resolveConfig({ provider: { ...saved, ...draft } }).provider : candidate
     }
     const resolvedCredential = isBuiltInFreeVisionProvider(provider)
       ? { value: BUILT_IN_FREE_VISION_KEY, source: 'built-in' }
@@ -652,6 +656,39 @@ export function createDisplayConfigHandler(
   }
 }
 
+export async function handleSessionMedia(req: IncomingMessage, res: ServerResponse, store: SessionMediaStore): Promise<void> {
+  try {
+    if (req.method !== 'GET' && req.method !== 'POST') { requestError(res, 405, 'method-not-allowed', 'Use GET or POST'); return }
+    if (!sameOriginRequest(req) || (req.method === 'POST' && !sameOriginPost(req))) { requestError(res, 403, 'origin-rejected', 'The request must originate from this DSH application'); return }
+    const ids = new URL(req.url ?? SESSION_MEDIA_ROUTE, 'http://dsh.internal').searchParams.getAll('sessionId')
+    if (ids.length !== 1 || !ids[0]) throw new TypeError('sessionId is required exactly once')
+    if (req.method === 'GET') { responseJson(res, 200, { ok: true, value: await store.get(ids[0]) }); return }
+    const body = await readJson(req, 4096)
+    if (!isRecord(body) || !Number.isSafeInteger(body.expectedRevision) || Number(body.expectedRevision) < 0) throw new TypeError('expectedRevision must be a non-negative integer')
+    responseJson(res, 200, { ok: true, value: await store.set(ids[0], Number(body.expectedRevision), body.settings) })
+  } catch (error) { requestError(res, error instanceof Error && error.message.includes('settings changed') ? 409 : 400, 'session-media-rejected', publicMessage(error)) }
+}
+
+/** Delegate authentication to the Host; legacy/missing auth APIs fail closed. */
+export function authenticatedWebHandler(
+  ctx: Context,
+  handler: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>,
+): (req: IncomingMessage, res: ServerResponse) => void | Promise<void> {
+  return (req, res) => {
+    const connection = ctx.get('connection') as { requestRejection?: (request: IncomingMessage) => 401 | 403 | undefined } | undefined
+    if (typeof connection?.requestRejection !== 'function') {
+      requestError(res, 503, 'host-auth-unavailable', 'This Host does not expose the required authenticated HTTP API; upgrade the Host')
+      return
+    }
+    const rejection = connection.requestRejection(req)
+    if (rejection !== undefined) {
+      requestError(res, rejection, rejection === 401 ? 'unauthorized' : 'origin-rejected', rejection === 401 ? 'Authenticate with this DSH Host first' : 'The Host rejected this request')
+      return
+    }
+    return handler(req, res)
+  }
+}
+
 /**
  * Attach optional Web routes whenever a webServer service is present.
  * @param ctx - plugin context owning route effects.
@@ -668,6 +705,7 @@ export function installVisionToolkitWeb(
   pastedImages: PastedImageBackend,
   pastePolicy: (sessionId: string, selection?: PasteSelectionQuery, modelLabel?: string) => Promise<PasteVerdict>,
   getDisplayConfig: () => { hidden: boolean },
+  sessionMedia?: SessionMediaStore,
 ): void {
   ctx.inject(['webServer'], (webCtx) => {
     webCtx.effect(() => {
@@ -681,24 +719,29 @@ export function installVisionToolkitWeb(
       const disposeSettings = webCtx.webServer.register({
         kind: 'exact',
         path: SETTINGS_ROUTE,
-        handler: (req, res) => backend.handle(req, res),
+        handler: authenticatedWebHandler(webCtx, (req, res) => backend.handle(req, res)),
       })
       const disposePasteImages = webCtx.webServer.register({
         kind: 'exact',
         path: PASTE_IMAGES_ROUTE,
-        handler: (req, res) => pastedImages.handle(req, res),
+        handler: authenticatedWebHandler(webCtx, (req, res) => pastedImages.handle(req, res)),
       })
       const disposePastePolicy = webCtx.webServer.register({
         kind: 'exact',
         path: PASTE_POLICY_ROUTE,
-        handler: createPastePolicyHandler(pastePolicy),
+        handler: authenticatedWebHandler(webCtx, createPastePolicyHandler(pastePolicy)),
       })
       const disposeDisplayConfig = webCtx.webServer.register({
         kind: 'exact',
         path: DISPLAY_CONFIG_ROUTE,
-        handler: createDisplayConfigHandler(getDisplayConfig),
+        handler: authenticatedWebHandler(webCtx, createDisplayConfigHandler(getDisplayConfig)),
+      })
+      const disposeSessionMedia = sessionMedia === undefined ? undefined : webCtx.webServer.register({
+        kind: 'exact', path: SESSION_MEDIA_ROUTE,
+        handler: authenticatedWebHandler(webCtx, (req, res) => handleSessionMedia(req, res, sessionMedia)),
       })
       return () => {
+        disposeSessionMedia?.()
         disposeDisplayConfig()
         disposePastePolicy()
         disposePasteImages()

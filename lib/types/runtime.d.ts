@@ -37,6 +37,7 @@ export declare class Semaphore {
     acquire(signal: AbortSignal, permits?: number): Promise<void>;
     /** Release owned permits and wake FIFO waiters whose full weight now fits. */
     release(permits?: number): void;
+    private drain;
 }
 /** Validated image metadata retained in structured results and diagnostics. */
 export interface ImageInfo {
@@ -390,8 +391,11 @@ export declare class VisionToolkitRuntime {
     private compressedImageRoot;
     private readCacheCandidate;
     private cacheEntryOutDigest;
+    private pinCompressedPath;
+    private releaseCompressedPaths;
     private pruneCompressedCache;
     private autoCompressImage;
+    private prepareCompressedImage;
     private validateImage;
     /**
      * Validate one non-image media file (video, audio, document) for glance.

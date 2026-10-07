@@ -32,12 +32,17 @@ import { createVisionTools } from './tools.ts'
 import { PLUGIN_VERSION } from './version.ts'
 import { installVisionToolkitWeb, VisionToolkitWebBackend } from './web.ts'
 import { MAX_PASTE_IMAGE_BYTES, MAX_PASTE_MEDIA_BYTES, PastedImageBackend } from './paste-images.ts'
+import { SessionMediaStore } from './session-media.ts'
+import { installMediaRouting } from './media-routing.ts'
+import { MediaReferenceAuthority } from './media-references.ts'
 
 export const name = '@gofman5/dsh-vision-toolkit'
 
 export { Config } from './config.ts'
 
-export const inject = ['tools', 'credentials', 'skills', 'subprocess', 'settings', 'agents', 'sessions']
+// Cordis refuses undeclared service reads ("cannot get property X without
+// inject"). `llm` and `attachments` back the session-media routing wire.
+export const inject = ['tools', 'credentials', 'skills', 'subprocess', 'settings', 'agents', 'sessions', 'llm', 'attachments']
 
 /** Plugin entry: validate configuration synchronously, then mount asynchronously. */
 export async function apply(ctx: Context, config: VisionToolkitConfig = {}): Promise<() => void> {
@@ -47,10 +52,24 @@ export async function apply(ctx: Context, config: VisionToolkitConfig = {}): Pro
   // the last serving generation when changed live.
   const settings = bindVisionSettings(ctx, plainVisionConfig(config))
   const manager = new VisionToolkitRuntimeManager(ctx)
-  const artifacts = new ArtifactAccessController(await prepareArtifactAccessKey())
   const lifecycle = new AbortController()
   const disposers: Array<() => void> = []
-  const storageHistory = new StorageHistoryStore(ctx)
+  let applySettings: ((next: VisionToolkitConfig, previous: VisionToolkitConfig) => Promise<void>) | undefined
+  let pendingSettings: { next: VisionToolkitConfig; previous: VisionToolkitConfig } | undefined
+  const settingsChanged = (next: VisionToolkitConfig, previous: VisionToolkitConfig): void | Promise<void> => {
+    if (lifecycle.signal.aborted) return
+    if (applySettings !== undefined) return applySettings(next, previous)
+    pendingSettings = { next, previous }
+  }
+  // Subscribe before any startup await; coalesce startup updates to the latest value.
+  disposers.push(settings.watch(settingsChanged))
+  let accessKey: Buffer
+  try { accessKey = await prepareArtifactAccessKey() } catch (error) { for (const dispose of disposers.reverse()) dispose(); throw error }
+  const artifacts = new ArtifactAccessController(accessKey)
+  const mediaReferences = new MediaReferenceAuthority(accessKey)
+  const sessionMedia = new SessionMediaStore(ctx)
+  disposers.push(() => { sessionMedia.dispose() })
+  const storageHistory = new StorageHistoryStore(ctx, () => { void settingsChanged(settings.get(), manager.ready ? manager.currentConfig() : settings.get()) })
   disposers.push(() => { storageHistory.dispose() })
   let storageHistoryWarningReported = false
   let operationalDisposers: { activationTool: () => void; exposure: () => void; skill: () => void } | undefined
@@ -83,6 +102,7 @@ export async function apply(ctx: Context, config: VisionToolkitConfig = {}): Pro
       () => manager.current(),
       value => artifacts.presentationMeta(value),
       lifecycle.signal,
+      (id, paths) => sessionMedia.assertInputs(id, paths),
     ))
     let activationTool: (() => void) | undefined
     let exposureDisposer: (() => void) | undefined
@@ -134,7 +154,7 @@ export async function apply(ctx: Context, config: VisionToolkitConfig = {}): Pro
     maxUploadBytes: () => MAX_PASTE_IMAGE_BYTES,
     maxMediaUploadBytes: () => MAX_PASTE_MEDIA_BYTES,
     storageGeneration: () => manager.storageGeneration(),
-  })
+  }, mediaReferences)
   // Image-input variants register asynchronously once eligible routes exist;
   // the runtime getter stays lazy so variants appear even when the runtime
   // becomes ready after the first sweep.
@@ -144,20 +164,27 @@ export async function apply(ctx: Context, config: VisionToolkitConfig = {}): Pro
     () => manager.ready ? manager.current() : undefined,
     () => manager.validatedStorageDirectory(),
   )
+  const pasteResolver = createPasteTakeoverResolver(ctx, currentConfig)
   installVisionToolkitWeb(
     ctx,
     backend,
     artifacts,
     pastedImages,
-    createPasteTakeoverResolver(ctx, currentConfig),
+    async (sessionId, selection, label) => {
+      const verdict = await pasteResolver(sessionId, selection, label)
+      const { settings } = await sessionMedia.get(sessionId)
+      return { ...verdict, ...(settings.enabled && settings.mode === 'direct' ? { takeOver: true } : {}), sessionMedia: settings }
+    },
     () => ({ hidden: currentConfig().imageInputVariants.hidden }),
+    sessionMedia,
   )
+  disposers.push(installMediaRouting(ctx, sessionMedia, currentConfig, () => manager.ready ? manager.current() : undefined, lifecycle.signal, mediaReferences))
   disposers.push(variants.dispose)
-  disposers.push(settings.watch(async (next, previous) => {
+  const reconcileSettings = async (next: VisionToolkitConfig, previous: VisionToolkitConfig): Promise<void> => {
     try {
       const prepared = await prepareWatchedSettingsGeneration(
         next,
-        previous,
+        manager.ready ? manager.currentConfig() : previous,
         ctx.settings.writable,
         storageHistory => settings.update({ storageHistory }),
       )
@@ -167,7 +194,7 @@ export async function apply(ctx: Context, config: VisionToolkitConfig = {}): Pro
           : String(prepared.persistenceError)
         ctx.logger.warn('dsh-vision-toolkit: activating Settings without persisting internal storage history. %s', message)
       }
-      if (prepared.config === undefined) return
+      if (prepared.config === undefined || lifecycle.signal.aborted) return
       const candidate = await storageHistory.restore(prepared.config)
       await manager.reconfigure(
         candidate,
@@ -182,7 +209,14 @@ export async function apply(ctx: Context, config: VisionToolkitConfig = {}): Pro
       const message = error instanceof Error ? error.message : String(error)
       ctx.logger.error('dsh-vision-toolkit: keeping the previous runtime after a refused Settings generation. %s', message)
     }
-  }))
+  }
+  // Keep buffering while reconciliation itself awaits; no change can fall into the startup gap.
+  while (pendingSettings !== undefined) {
+    const pending = pendingSettings
+    pendingSettings = undefined
+    await reconcileSettings(pending.next, pending.previous)
+  }
+  applySettings = reconcileSettings
 
   return () => {
     lifecycle.abort()

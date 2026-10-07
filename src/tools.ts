@@ -208,6 +208,7 @@ export function createVisionTools(
   source: VisionToolkitRuntimeSource,
   projectPresentation: VisionToolkitPresentationProjector = presentationIdentity,
   lifecycleSignal?: AbortSignal,
+  assertInputs?: (sessionId: string | undefined, paths: readonly string[]) => Promise<void>,
 ): ReturnType<typeof defineTool>[] {
   const presentationMeta = (_args: unknown, value: JsonValue): JsonValue => projectPresentation(value)
   return [
@@ -238,6 +239,7 @@ export function createVisionTools(
         render: renderJson,
       },
       async execute(args: GlanceArgs, exec) {
+        await assertInputs?.(sessionId(exec), args.images)
         const request: GlanceRequest = {
           images: args.images,
           ...(args.query === undefined ? {} : { query: args.query }),
@@ -281,6 +283,7 @@ export function createVisionTools(
         presentationMeta,
       },
       async execute(args: GroundArgs, exec) {
+        await assertInputs?.(sessionId(exec), [args.image])
         const request: LocatePreviewRequest = {
           image: args.image,
           target: args.target,
@@ -330,6 +333,7 @@ export function createVisionTools(
         presentationMeta,
       },
       async execute(args: DetectArgs, exec) {
+        await assertInputs?.(sessionId(exec), [args.image])
         const request: LocatePreviewRequest = {
           image: args.image,
           target: args.category ?? 'every distinct UI element — include the exact visible text in each label',
@@ -499,6 +503,7 @@ export function createVisionTools(
         presentationMeta,
       },
       async execute(args: LongOcrArgs, exec) {
+        await assertInputs?.(sessionId(exec), [args.image])
         const request: LongScreenshotOcrRequest = {
           image: args.image,
           ...(args.mode === undefined ? {} : { mode: args.mode }),

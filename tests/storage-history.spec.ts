@@ -85,7 +85,7 @@ describe('configured storage history', () => {
     })).toEqual(['/storage/a', '/storage/b'])
   })
 
-  it('keeps the newest persistence request when storage finishes opening concurrently', async () => {
+  it('retains every accepted root when persistence requests overlap with opening', async () => {
     const state: HarnessState = { roots: [] }
     let announceFirstSet: (() => void) | undefined
     const firstSetStarted = new Promise<void>((resolve) => { announceFirstSet = resolve })
@@ -103,7 +103,7 @@ describe('configured storage history', () => {
     releaseFirstSet?.()
 
     await expect(Promise.all([first, second])).resolves.toEqual([true, true])
-    expect(state.roots).toEqual(['/storage/b'])
+    expect(state.roots).toEqual(['/storage/a', '/storage/b'])
     store.dispose()
   })
 

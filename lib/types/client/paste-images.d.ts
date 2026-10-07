@@ -24,10 +24,13 @@ interface PasteRecord {
     status: 'ready' | 'copying' | 'copied' | 'error';
     error?: string | undefined;
     absolutePath?: string | undefined;
+    mediaReference?: string | undefined;
 }
 interface PasteBatch {
     sessionId: string;
+    input: PasteSessionInput;
     records: PasteRecord[];
+    serializers: number;
     inflight?: Promise<void> | undefined;
     unsubscribe?: (() => void) | undefined;
 }
@@ -40,7 +43,40 @@ interface PasteOccurrence {
     length?: number;
     label: string;
 }
+/**
+ * The per-session input face this controller drives. Structurally narrower
+ * than the host's published `SessionInput` so both the runtime face and the
+ * test stand-ins satisfy it; the Lexical-composer shell additionally carries
+ * the detect-coordinate verbs read through {@link ComposerShellExtras}.
+ */
+interface PasteSessionInput {
+    /** Insert one reference chip over a span (revision-CAS'd). */
+    insertReference(reference: {
+        source: string;
+        ref: string;
+        label: string;
+        clipboardText: string;
+    }, span: {
+        start: number;
+        end: number;
+        draftRev: number;
+    }): boolean;
+    /** Replace the whole draft. */
+    setDraft(text: string): void;
+    /** Surface a composer notice. */
+    notify(level: 'info' | 'error', text: string): void;
+    readonly state: {
+        getSnapshot(): {
+            readonly draft: string;
+            readonly draftRev: number;
+            readonly phase: 'plain' | 'adjudicating' | 'claimed' | 'submitting';
+            readonly occurrences: readonly PasteOccurrence[];
+        };
+        subscribe(listener: () => void): () => void;
+    };
+}
 type PasteDockProps = PropsRuntime<'conversation.input.dock'> & {
+    sessionId: string;
     controller: PasteImageController;
     remove: (occurrence: PasteOccurrence) => void;
 };
@@ -48,13 +84,14 @@ type PasteDockProps = PropsRuntime<'conversation.input.dock'> & {
 export declare class PasteImageController {
     private readonly ctx;
     private readonly records;
+    private readonly completedReferences;
     private readonly listeners;
     private revision;
     private readonly verdicts;
     /** A paste awaiting the user's attach confirmation, rendered in the dock. */
     private pendingConfirm;
     /** Session-scoped “don't ask again”: later pastes attach immediately. */
-    private sessionAttachConfirmed;
+    private readonly confirmedSessions;
     /**
      * Session id last reported by the dock slot injection. 0.2.0-rc hosts
      * dropped `sessions.list.current`, so the session the dock renders for is
@@ -93,6 +130,8 @@ export declare class PasteImageController {
      * @returns the final detect-coordinate cursor, right after the last chip.
      */
     private insertComposerRecords;
+    /** Release orphaned Files only after every detached serializer has finished. */
+    private pruneBatch;
     /** Best-effort removal of one chip this batch already inserted (rollback path). */
     private removeComposerChip;
     /**
@@ -125,6 +164,7 @@ export declare class PasteImageController {
      * @param modelLabel - the model-selector label currently shown.
      */
     refreshVerdict(sessionId: string, modelLabel: string): void;
+    invalidateMediaPolicy(): void;
     /** Focus-time verdict prefetch for whichever Session the composer currently shows. */
     prefetchVerdict(): void;
     /**
@@ -152,13 +192,13 @@ export declare class PasteImageController {
      */
     private takeoverPasteComposer;
     /** The paste currently waiting for the attach confirmation, when any. */
-    confirmState(): Readonly<PasteConfirmState> | undefined;
+    confirmState(sessionId?: string | undefined): Readonly<PasteConfirmState> | undefined;
     /**
      * Attach the pending paste after the user confirmed the dialog. With
      * `remember`, every later paste in this page session attaches without
      * asking again.
      */
-    confirmAttach(remember: boolean): void;
+    confirmAttach(remember: boolean, sessionId?: string | undefined): void;
     /** Drop the pending paste after the user cancelled the dialog. */
     cancelConfirm(): void;
     handlePaste(event: ClipboardEvent): boolean;

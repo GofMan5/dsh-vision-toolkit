@@ -32,6 +32,7 @@ export declare function restoreDurableStorageHistory(config: VisionToolkitConfig
 /** Optional storage-domain sidecar for storage roots that Settings cannot persist itself. */
 export declare class StorageHistoryStore {
     private readonly ctx;
+    private readonly onRestored?;
     private storage;
     private storageFiber;
     private storageReady;
@@ -39,7 +40,7 @@ export declare class StorageHistoryStore {
     private desiredRoots;
     private persistenceTicket;
     private warned;
-    constructor(ctx: Context);
+    constructor(ctx: Context, onRestored?: (() => void) | undefined);
     /**
      * Restore durable roots into one Settings generation before runtime preparation.
      * @param config - Settings generation to restore.

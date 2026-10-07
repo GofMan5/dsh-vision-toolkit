@@ -6,6 +6,8 @@
  * @module dsh-vision-toolkit/display-config
  */
 
+import { readApiResponse } from './api-response.ts'
+
 export const DISPLAY_CONFIG_ROUTE = '/_dsh/vision-toolkit/display-config'
 
 const CONFIG_TTL_MS = 10_000
@@ -34,7 +36,7 @@ export async function readDisplayConfig(): Promise<{ hidden: boolean }> {
     try {
       const response = await fetch(DISPLAY_CONFIG_ROUTE, { cache: 'no-store' })
       if (epoch !== cacheEpoch) continue
-      const body = await response.json() as { ok?: boolean; value?: { hidden?: unknown } }
+      const body = await readApiResponse<{ ok?: boolean; value?: { hidden?: unknown } }>(response)
       if (epoch !== cacheEpoch) continue
       if (body.ok !== true || typeof body.value?.hidden !== 'boolean') {
         throw new Error('malformed display-config payload')

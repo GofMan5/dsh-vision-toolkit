@@ -1,8 +1,9 @@
-import { chmod, lstat, mkdtemp, mkdir, readFile, readdir, realpath, symlink, writeFile } from 'node:fs/promises'
+import { chmod, link, lstat, mkdtemp, mkdir, readFile, readdir, realpath, symlink, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  assertDistinctOutput,
   commitStagedOutput,
   commitStagedDirectory,
   createPathPolicy,
@@ -315,6 +316,26 @@ describe('resolveInputFile', () => {
   })
 })
 
+describe('assertDistinctOutput', () => {
+  it('rejects exact and existing hard-link aliases but accepts a distinct sibling', async () => {
+    const workspace = await tempDir('identity')
+    const input = join(workspace, 'input.png')
+    const alias = join(workspace, 'alias.png')
+    await writeFile(input, 'original')
+    await link(input, alias)
+    await expect(assertDistinctOutput(input, input)).rejects.toMatchObject({ code: 'input' })
+    await expect(assertDistinctOutput(input, alias)).rejects.toMatchObject({ code: 'input' })
+    await expect(assertDistinctOutput(input, join(workspace, 'sibling.png'))).resolves.toBeUndefined()
+    await expect(readFile(input, 'utf8')).resolves.toBe('original')
+  })
+
+  it.skipIf(process.platform !== 'win32')('rejects a Windows case alias before any output exists', async () => {
+    const workspace = await tempDir('case-identity')
+    await expect(assertDistinctOutput(join(workspace, 'original.png'), join(workspace, 'ORIGINAL.png')))
+      .rejects.toMatchObject({ code: 'input' })
+  })
+})
+
 describe('resolveOutputFile', () => {
   it('defaults into the plugin output directory with the given name', async () => {
     const workspace = await tempDir('workspace')
@@ -332,6 +353,15 @@ describe('resolveOutputFile', () => {
     expect(() => resolveOutputFile('../x.svg', policy, 'd.svg', ['.svg'])).toThrowError(/one filename/)
     expect(() => resolveOutputFile('nested/x.svg', policy, 'd.svg', ['.svg'])).toThrowError(/one filename/)
     expect(() => resolveOutputFile('x.png', policy, 'd.svg', ['.svg'])).toThrowError(/must use one of/)
+  })
+
+  it.each(['\ud800.png', '\udfff.png'])('rejects malformed Unicode output %j at the shared boundary', async (name) => {
+    const policy = await createPathPolicy(await tempDir('unicode'), [])
+    expect(() => resolveOutputFile(name, policy, 'default.png', ['.png'])).toThrow(/well-formed Unicode/)
+    expect(() => resolveOutputFile(undefined, policy, name, ['.png'])).toThrow(/well-formed Unicode/)
+    expect(() => resolveOutputDirectory(name, policy, 'default')).toThrow(/well-formed Unicode/)
+    expect(resolveOutputFile('截图-😀.png', policy, 'default.png', ['.png']))
+      .toBe(join(policy.outputDir, '截图-😀.png'))
   })
 
   it('commits a random staging file into the final name', async () => {

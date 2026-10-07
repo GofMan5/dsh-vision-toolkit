@@ -367,6 +367,29 @@ describe('VisionToolkitWebBackend', () => {
       expect(relay.requests).toHaveLength(1)
     })
 
+    it('retains headers only for a draft with the same scoped destination', async () => {
+      const seen: Array<{ url: string; headers: Record<string, string> }> = []
+      const original = globalThis.fetch
+      const { post } = await setup()
+      try {
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          if (String(input).startsWith('https://relay.')) {
+            seen.push({ url: String(input), headers: init?.headers as Record<string, string> })
+            return Response.json({ data: [{ id: 'fixture' }] })
+          }
+          return original(input, init)
+        }) as typeof fetch
+        const saved = await post({ action: 'save', expectedRevision: 0, value: { provider: { baseUrl: 'https://relay.example/v1', credential: 'TEST', protocol: 'openai', headers: { 'x-required': 'fixture-metadata' }, userAgent: 'fixture-agent' } } })
+        expect(saved.status).toBe(200)
+        expect((await post({ action: 'list-models', provider: { baseUrl: 'https://relay.example/v1', credential: 'TEST', protocol: 'openai' } })).status).toBe(200)
+        expect(seen[0]?.headers['x-required']).toBe('fixture-metadata')
+        expect(seen[0]?.headers['User-Agent']).toBe('fixture-agent')
+        expect((await post({ action: 'list-models', provider: { baseUrl: 'https://relay.other/v1', credential: 'TEST', protocol: 'openai' } })).status).toBe(200)
+        expect(seen[1]?.headers['x-required']).toBeUndefined()
+        expect(seen[1]?.headers['User-Agent']).not.toBe('fixture-agent')
+      } finally { globalThis.fetch = original }
+    })
+
     it('rejects an invalid provider draft without contacting the relay', async () => {
       const { post } = await setup()
       const response = await post({

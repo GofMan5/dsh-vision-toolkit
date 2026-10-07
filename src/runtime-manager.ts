@@ -154,12 +154,12 @@ export class VisionToolkitRuntimeManager {
    * @param candidate - generation returned by {@link prepareCandidate}.
    */
   activateCandidate(candidate: PreparedRuntimeGeneration): void {
+    this.reconfigureTicket += 1
     if (this.active?.fingerprint === candidate.fingerprint) {
       this.active = candidate
       this.lastError = undefined
       return
     }
-    this.reconfigureTicket += 1
     this.active = candidate
     this.rememberStorageDirectories(candidate.config.storageHistory)
     this.rememberStorageDirectory(candidate.config.storageDir)

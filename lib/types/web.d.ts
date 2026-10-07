@@ -12,6 +12,7 @@ import { type VisionToolkitConfig } from './config.ts';
 import { type ModelCapabilities } from './model-capabilities.ts';
 import { type PluginUpdateCapability, type PluginUpdateCheck, type PluginUpdateResult } from './plugin-update.ts';
 import { VisionToolkitRuntimeManager, type PreparedRuntimeGeneration, type RuntimeManagerStatus } from './runtime-manager.ts';
+import { type SessionMediaStore } from './session-media.ts';
 /** Exact route used by the browser Settings page. */
 export declare const SETTINGS_ROUTE = "/_dsh/vision-toolkit/settings";
 /** Same-origin route used by the browser client to read display-mode flags. */
@@ -125,6 +126,9 @@ export declare function createPastePolicyHandler(resolve: (sessionId: string, se
 export declare function createDisplayConfigHandler(getDisplayConfig: () => {
     hidden: boolean;
 }): (req: IncomingMessage, res: ServerResponse) => void;
+export declare function handleSessionMedia(req: IncomingMessage, res: ServerResponse, store: SessionMediaStore): Promise<void>;
+/** Delegate authentication to the Host; legacy/missing auth APIs fail closed. */
+export declare function authenticatedWebHandler(ctx: Context, handler: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>): (req: IncomingMessage, res: ServerResponse) => void | Promise<void>;
 /**
  * Attach optional Web routes whenever a webServer service is present.
  * @param ctx - plugin context owning route effects.
@@ -136,5 +140,5 @@ export declare function createDisplayConfigHandler(getDisplayConfig: () => {
  */
 export declare function installVisionToolkitWeb(ctx: Context, backend: VisionToolkitWebBackend, artifacts: ArtifactAccessController, pastedImages: PastedImageBackend, pastePolicy: (sessionId: string, selection?: PasteSelectionQuery, modelLabel?: string) => Promise<PasteVerdict>, getDisplayConfig: () => {
     hidden: boolean;
-}): void;
+}, sessionMedia?: SessionMediaStore): void;
 //# sourceMappingURL=web.d.ts.map

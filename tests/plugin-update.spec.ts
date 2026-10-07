@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { createServer } from 'node:http'
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { access, chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
@@ -15,9 +15,18 @@ import {
   VISION_TOOLKIT_PACKAGE,
 } from '../src/plugin-update.ts'
 
+vi.mock('node:fs/promises', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return { ...actual, access: vi.fn(actual.access) }
+})
+
 const roots: string[] = []
 
 afterEach(async () => {
+  vi.mocked(access).mockReset()
+  vi.mocked(access).mockImplementation((await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')).access)
+  vi.unstubAllGlobals()
+  vi.unstubAllEnvs()
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
 
@@ -201,6 +210,39 @@ describe('git installation updates', () => {
     vi.unstubAllGlobals()
   })
 
+  it('checks the selected GitHub source when the profile is read-only', async () => {
+    const fixture = await profileFixture('github:GofMan5/dsh-vision-toolkit')
+    const subprocess = new FakeSubprocess(async () => ({ stdout: '"0.1.1"\n' }))
+    const service = new VisionToolkitPluginUpdateService(host(subprocess), '0.1.0', {
+      profileDir: fixture.profileDir,
+      packageRoot: fixture.installedDir,
+      argv: ['web'],
+    })
+    vi.mocked(access).mockRejectedValue(Object.assign(new Error('read-only fixture'), { code: 'EACCES' }))
+    const fetchMock = vi.fn(async (url: string | URL | Request) => {
+      const target = String(url)
+      if (target === 'https://api.github.com/repos/GofMan5/dsh-vision-toolkit/commits?per_page=1') return headCommits(HEAD_COMMIT)
+      if (target === `https://raw.githubusercontent.com/GofMan5/dsh-vision-toolkit/${HEAD_COMMIT}/package.json`) return rawManifest('0.4.0')
+      throw new Error(`unexpected fetch ${target}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(service.check()).resolves.toMatchObject({
+      supported: false,
+      checkSupported: true,
+      reason: 'profile-read-only',
+      dependencySpec: 'github:GofMan5/dsh-vision-toolkit',
+      currentVersion: '0.1.0',
+      latestVersion: '0.4.0',
+      latestCommit: HEAD_COMMIT,
+      updateAvailable: true,
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(subprocess.spawns).toHaveLength(0)
+    await expect(service.installAndRestart('0.4.0')).rejects.toMatchObject({ code: 'update-unavailable' })
+    expect(subprocess.spawns).toHaveLength(0)
+  })
+
   it('reports already-current when the GitHub head matches the installed version', async () => {
     const fixture = await profileFixture('github:GofMan5/dsh-vision-toolkit')
     const subprocess = new FakeSubprocess(async () => ({ stdout: '' }))
@@ -341,29 +383,63 @@ describe('VisionToolkitPluginUpdateService', () => {
     await expect(service.capability()).resolves.toMatchObject({ supported: true, profile: 'web' })
   })
 
-  it('routes Windows pnpm batch shims through cmd.exe', async () => {
+  it.each(['CMD', 'bat'])('routes Windows pnpm %s shims through a Node launcher', async extension => {
     const fixture = await profileFixture()
     const subprocess = new FakeSubprocess(async () => ({ stdout: '"0.2.0"\n' }))
-    subprocess.resolveExecutable.mockResolvedValue('C:\\Users\\tester\\AppData\\Roaming\\npm\\pnpm.CMD')
+    const pnpmPath = `C:\\Users\\space folder\\pnpm.${extension}`
+    subprocess.resolveExecutable.mockResolvedValue(pnpmPath)
     const service = new VisionToolkitPluginUpdateService(host(subprocess), '0.1.0', {
       profileDir: fixture.profileDir,
       packageRoot: fixture.installedDir,
       argv: ['web'],
-      allowDetachedRestart: true,
       platform: 'win32',
     })
 
     await expect(service.check()).resolves.toMatchObject({ latestVersion: '0.2.0' })
     expect(subprocess.spawns[0]?.argv).toEqual([
-      process.env.COMSPEC ?? 'cmd.exe',
-      '/d',
-      '/s',
-      '/c',
-      'C:\\Users\\tester\\AppData\\Roaming\\npm\\pnpm.CMD',
-      'view',
-      VISION_TOOLKIT_PACKAGE,
-      'version',
-      '--json',
+      process.execPath, '-e', expect.any(String), pnpmPath,
+      'view', VISION_TOOLKIT_PACKAGE, 'version', '--json',
+    ])
+  })
+
+  it.skipIf(process.platform !== 'win32')('executes a harmless pnpm.cmd under a path with spaces and shell metacharacters', async () => {
+    const fixture = await profileFixture()
+    const shimDir = join(fixture.profileDir, 'space folder & (shim)^ %DVT_SHIM_PATH% !')
+    await mkdir(shimDir)
+    const pnpmPath = join(shimDir, 'fake-pnpm.CMD')
+    const observedPath = join(shimDir, 'observed.json')
+    const entryPath = join(shimDir, 'fake-pnpm.cjs')
+    await writeFile(entryPath, `
+const { writeFileSync } = require('node:fs')
+writeFileSync(${JSON.stringify(observedPath)}, JSON.stringify(process.argv.slice(2)))
+console.log(JSON.stringify('0.2.0'))
+`)
+    await writeFile(pnpmPath, `@echo off\r\n"${process.execPath}" "%~dp0fake-pnpm.cjs" %*\r\n`)
+    vi.stubEnv('DVT_SHIM_PATH', 'must-not-expand')
+    const subprocess = new FakeSubprocess(async spec => {
+      const child = spawn(spec.argv[0]!, spec.argv.slice(1), {
+        cwd: spec.cwd,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        signal: spec.signal,
+        windowsHide: true,
+      })
+      let stdout = ''
+      let stderr = ''
+      child.stdout?.on('data', chunk => { stdout += String(chunk) })
+      child.stderr?.on('data', chunk => { stderr += String(chunk) })
+      const [exitCode] = await once(child, 'close') as [number]
+      return { stdout, stderr, exitCode }
+    })
+    subprocess.resolveExecutable.mockResolvedValue(pnpmPath)
+    const service = new VisionToolkitPluginUpdateService(host(subprocess), '0.1.0', {
+      profileDir: fixture.profileDir,
+      packageRoot: fixture.installedDir,
+      argv: ['web'],
+    })
+
+    await expect(service.check()).resolves.toMatchObject({ latestVersion: '0.2.0' })
+    expect(JSON.parse(await readFile(observedPath, 'utf8'))).toEqual([
+      'view', VISION_TOOLKIT_PACKAGE, 'version', '--json',
     ])
   })
 
@@ -396,6 +472,42 @@ describe('VisionToolkitPluginUpdateService', () => {
     })
     expect(prepareRestart).not.toHaveBeenCalled()
     expect(schedule).not.toHaveBeenCalled()
+  })
+
+  it.each([false, true])('rejects repeat installs before a manual restart (lockfile: %s)', async hadLockfile => {
+    const fixture = await profileFixture()
+    const manifestPath = join(fixture.profileDir, 'package.json')
+    const lockfilePath = join(fixture.profileDir, 'pnpm-lock.yaml')
+    if (hadLockfile) await writeFile(lockfilePath, 'original-lockfile\n')
+    let latestVersion = '0.2.0'
+    const subprocess = new FakeSubprocess(async spec => {
+      if (spec.argv.includes('view')) return { stdout: JSON.stringify(latestVersion) }
+      if (latestVersion !== '0.2.0') throw new Error('repeat install must not run')
+      await writeFile(manifestPath, JSON.stringify({ dependencies: { [VISION_TOOLKIT_PACKAGE]: latestVersion } }))
+      await writeFile(lockfilePath, 'updated-lockfile\n')
+      await writeFile(join(fixture.installedDir, 'package.json'), JSON.stringify({ version: latestVersion }))
+      return { stdout: 'updated\n' }
+    })
+    const service = new VisionToolkitPluginUpdateService(host(subprocess), '0.1.0', {
+      profileDir: fixture.profileDir,
+      packageRoot: fixture.installedDir,
+      argv: ['web'],
+    })
+
+    await expect(service.installAndRestart('0.2.0')).resolves.toMatchObject({ manualRestartRequired: true })
+    latestVersion = '0.3.0'
+    await expect(service.check()).resolves.toMatchObject({ currentVersion: '0.1.0', latestVersion: '0.3.0' })
+    const spawnCount = subprocess.spawns.length
+    const manifest = await readFile(manifestPath)
+    const lockfile = await readFile(lockfilePath)
+    for (const version of ['0.2.0', '0.3.0']) {
+      await expect(service.installAndRestart(version)).rejects.toMatchObject({ code: 'restart-required' })
+    }
+    expect(subprocess.spawns).toHaveLength(spawnCount)
+    expect(await readFile(manifestPath)).toEqual(manifest)
+    expect(await readFile(lockfilePath)).toEqual(lockfile)
+    await expect(readFile(join(fixture.installedDir, 'package.json'), 'utf8')).resolves.toContain('0.2.0')
+    expect((await readdir(fixture.profileDir)).filter(name => name.startsWith('.dsh-vision-toolkit-update'))).toEqual([])
   })
 
   it('checks the configured registry through pnpm without mutating the profile', async () => {

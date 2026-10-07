@@ -116,6 +116,7 @@ export declare class VisionToolkitPluginUpdateService {
     private readonly runtimeReady;
     private readonly platform;
     private updating;
+    private manualRestartRequired;
     constructor(ctx: Pick<Context, 'subprocess'>, currentVersion: string, options?: PluginUpdateServiceOptions);
     /** Bind readiness checks to the active WebServer and reject ports that cannot be reproduced on restart. */
     configureWebServer(host: string, port: number): void;

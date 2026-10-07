@@ -8,6 +8,7 @@
 
 import { detectModelCapabilities, type ModelCapabilities } from './model-capabilities.ts'
 import type { ResolvedVisionToolkitConfig } from './config.ts'
+import { redactText } from './errors.ts'
 
 /** One relay catalog entry: model id plus detected capabilities. */
 export interface RelayModelEntry {
@@ -96,23 +97,36 @@ export async function fetchRelayModels(
   const composite = signal === undefined ? timeout : AbortSignal.any([signal, timeout])
   let response: Response
   try {
-    response = await fetch(url, { method: 'GET', headers, signal: composite })
+    response = await fetch(url, { method: 'GET', redirect: 'error', headers, signal: composite })
   } catch (error) {
     if (signal?.aborted === true) throw error
-    throw new Error(`relay model list could not be fetched from ${url}: ${message(error)}`)
+    throw new Error(redactText(`relay model list could not be fetched from ${url}: ${message(error)}`, [apiKey, ...Object.values(extraHeaders)]))
   }
   const declaredLength = Number(response.headers.get('content-length') ?? Number.NaN)
   if (Number.isFinite(declaredLength) && declaredLength > MAX_MODELS_BODY_BYTES) {
+    await response.body?.cancel()
     throw new Error(`relay model list at ${url} declares a body above the ${MAX_MODELS_BODY_BYTES}-byte limit`)
   }
-  const body = await response.text()
-  if (Buffer.byteLength(body, 'utf8') > MAX_MODELS_BODY_BYTES) {
-    // Byte count, not code units: a CJK body would otherwise pass a cap it
-    // visually exceeds by 2-3x.
-    throw new Error(`relay model list at ${url} exceeds the ${MAX_MODELS_BODY_BYTES}-byte limit`)
+  const reader = response.body?.getReader()
+  const chunks: Uint8Array[] = []
+  let bytes = 0
+  if (reader !== undefined) {
+    try {
+      while (true) {
+        const chunk = await reader.read()
+        if (chunk.done) break
+        bytes += chunk.value.byteLength
+        if (bytes > MAX_MODELS_BODY_BYTES) {
+          await reader.cancel()
+          throw new Error(`relay model list at ${url} exceeds the ${MAX_MODELS_BODY_BYTES}-byte limit`)
+        }
+        chunks.push(chunk.value)
+      }
+    } finally { reader.releaseLock() }
   }
+  const body = Buffer.concat(chunks, bytes).toString('utf8')
   if (!response.ok) {
-    const excerpt = body.slice(0, 200).replace(/\s+/gu, ' ').trim()
+    const excerpt = redactText(body, [apiKey, ...Object.values(extraHeaders)]).slice(0, 200).replace(/\s+/gu, ' ').trim()
     if (response.status === 401) throw new Error(`relay rejected the configured credential (HTTP 401) at ${url}`)
     if (response.status === 403) throw new Error(`relay is reachable but restricts GET /models (HTTP 403); the key may still work for vision requests`)
     if (response.status === 404 || response.status === 405) throw new Error(`relay does not expose GET /models (HTTP ${response.status}); type the model id manually`)

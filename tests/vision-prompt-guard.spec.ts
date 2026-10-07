@@ -171,12 +171,15 @@ describe.skipIf(process.platform === 'win32')('vision-model prompt guard', () =>
       await mkdir(join(root, 'bin'), { recursive: true })
       await mkdir(cleanHome, { recursive: true })
       await writeFile(join(root, 'vision_client.py'), [
-        'import urllib.request',
+        'import urllib.error,urllib.request',
         'DEFAULT_PROMPT="default description"',
         'def describe_image(image_url,prompt=None,*args,**kwargs):',
         `    urls=[${JSON.stringify(`${providerBase}/chat/completions`)},${JSON.stringify(`http://127.0.0.1:${providerAddress.port}/v10`)},${JSON.stringify(`http://127.0.0.1:${otherAddress.port}/elsewhere`)},${JSON.stringify(`${providerBase}/redirect`)}]`,
         '    for url in urls:',
-        '        with urllib.request.urlopen(urllib.request.Request(url,data=b"{}")) as response: response.read()',
+        '        try:',
+        '            with urllib.request.urlopen(urllib.request.Request(url,data=b"{}")) as response: response.read()',
+        '        except urllib.error.HTTPError as error:',
+        '            assert error.code==302 and url.endswith("/redirect")',
         '    return "done"',
         '',
       ].join('\n'))
@@ -210,7 +213,6 @@ describe.skipIf(process.platform === 'win32')('vision-model prompt guard', () =>
         { url: '/v10' },
         { url: 'other:/elsewhere' },
         { url: '/v1/redirect', route: 'route-id', tenant: 'acme' },
-        { url: 'other:/redirect-target' },
       ])
     } finally {
       await Promise.all([

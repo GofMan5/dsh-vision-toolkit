@@ -429,6 +429,7 @@ export function resolveOutputFile(
   extensions: readonly string[],
 ): string {
   const name = raw === undefined || raw.trim().length === 0 ? defaultName : raw.trim()
+  if (!name.isWellFormed()) throw new VisionToolkitError('path', 'output name must contain well-formed Unicode')
   const expanded = expandUserHome(name)
   if (isAbsolute(expanded)) throw new VisionToolkitError('path', 'output must be a filename, not an absolute path')
   const segments = expanded.split(/[\\/]/)
@@ -464,6 +465,7 @@ export function createStagedOutput(policy: PathPolicy, extension: string): strin
 /** Resolve one direct child directory of the managed artifact root. */
 export function resolveOutputDirectory(raw: string | undefined, policy: PathPolicy, defaultName: string): string {
   const name = raw === undefined || raw.trim().length === 0 ? defaultName : raw.trim()
+  if (!name.isWellFormed()) throw new VisionToolkitError('path', 'output name must contain well-formed Unicode')
   const expanded = expandUserHome(name)
   if (isAbsolute(expanded)) throw new VisionToolkitError('path', 'artifact directory must not be an absolute path')
   const segments = expanded.split(/[\\/]/)
@@ -611,8 +613,20 @@ export async function commitStagedOutput(staged: string, finalPath: string, poli
 }
 
 /** Reject an output that would overwrite its own input file. */
-export function assertDistinctOutput(input: string, output: string): void {
-  if (input === output) {
-    throw new VisionToolkitError('input', 'output would overwrite the input image')
+export async function assertDistinctOutput(input: string, output: string): Promise<void> {
+  let identical = relative(input, output) === ''
+  if (!identical) {
+    let destination: Stats | undefined
+    try {
+      destination = await stat(output)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+    if (destination !== undefined) {
+      const source = await stat(input)
+      identical = source.ino !== 0 && destination.ino !== 0
+        && source.dev === destination.dev && source.ino === destination.ino
+    }
   }
+  if (identical) throw new VisionToolkitError('input', 'output would overwrite the input image')
 }

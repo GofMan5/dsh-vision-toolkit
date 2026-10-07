@@ -8,7 +8,7 @@
 
 import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto'
 import { lstat, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { basename, extname, join } from 'node:path'
+import { basename, dirname, extname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ResolvedCredential } from '@deepseek-ai/dsh-credentials'
@@ -207,6 +207,7 @@ export class Semaphore {
         const index = this.waiters.indexOf(entry)
         if (index >= 0) this.waiters.splice(index, 1)
         reject(new VisionToolkitError('cancelled', 'vision-toolkit: cancelled while waiting for a concurrency slot'))
+        this.drain()
       }
       this.waiters.push(entry)
       signal.addEventListener('abort', entry.onAbort, { once: true })
@@ -216,6 +217,10 @@ export class Semaphore {
   /** Release owned permits and wake FIFO waiters whose full weight now fits. */
   release(permits = 1): void {
     this.active = Math.max(0, this.active - permits)
+    this.drain()
+  }
+
+  private drain(): void {
     while (this.waiters.length > 0) {
       const next = this.waiters[0]
       if (next === undefined || this.active + next.permits > this.limit) break
@@ -226,6 +231,13 @@ export class Semaphore {
     }
   }
 }
+
+// Shared by runtime generations using the same on-disk cache. Pins last until
+// the whole operation finishes, not merely until validation returns a path.
+const compressedCachePins = new Map<string, number>()
+// ponytail: cache misses serialize here; use per-root gates only if measured contention matters.
+const compressedCacheGate = new Semaphore(1)
+const cacheCleanupSignal = new AbortController().signal
 
 /** Validated image metadata retained in structured results and diagnostics. */
 export interface ImageInfo {
@@ -553,6 +565,7 @@ interface OperationContext {
   metrics: OperationMetrics
   /** Session id when available, otherwise the workspace key used by the concurrency gate. */
   operationKey: string
+  compressedPaths: Set<string>
 }
 
 const REGION_PATTERN = /^\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(-?\d+)\s*$/
@@ -865,9 +878,12 @@ export class VisionToolkitRuntime {
     }
 
     const executionDeadline = createDeadline(options.signal, timeoutMs)
+    const operation: OperationContext = {
+      signal: executionDeadline.signal, metrics, operationKey: semaphore.key, compressedPaths: new Set(),
+    }
     try {
       if (executionDeadline.signal.aborted) throw this.operationError(tool, undefined, executionDeadline)
-      const value = await action({ signal: executionDeadline.signal, metrics, operationKey: semaphore.key })
+      const value = await action(operation)
       if (executionDeadline.signal.aborted) throw this.operationError(tool, undefined, executionDeadline)
       this.ctx.logger.info(
         'dsh-vision-toolkit tool=%s outcome=ok totalMs=%d queueMs=%d upstreamMs=%d images=%d imageBytes=%d imagePixels=%d cacheHits=%d model=%s',
@@ -898,6 +914,7 @@ export class VisionToolkitRuntime {
       )
       throw classified
     } finally {
+      await this.releaseCompressedPaths(operation)
       if (acquired) semaphore.value.release(permits)
       executionDeadline.cleanup()
       if (semaphore.value.idle) this.semaphores.delete(semaphore.key)
@@ -1027,6 +1044,29 @@ export class VisionToolkitRuntime {
     return /^[0-9a-f]{16}-/u.test(tail) ? tail.slice(0, 16) : undefined
   }
 
+  private pinCompressedPath(path: string, operation: OperationContext): void {
+    if (operation.compressedPaths.has(path)) return
+    operation.compressedPaths.add(path)
+    compressedCachePins.set(path, (compressedCachePins.get(path) ?? 0) + 1)
+  }
+
+  private async releaseCompressedPaths(operation: OperationContext): Promise<void> {
+    if (operation.compressedPaths.size === 0) return
+    await compressedCacheGate.acquire(cacheCleanupSignal)
+    try {
+      for (const path of operation.compressedPaths) {
+        const remaining = (compressedCachePins.get(path) ?? 1) - 1
+        if (remaining === 0) compressedCachePins.delete(path)
+        else compressedCachePins.set(path, remaining)
+      }
+      for (const root of new Set([...operation.compressedPaths].map(path => dirname(path)))) {
+        await this.pruneCompressedCache(root).catch(() => {})
+      }
+    } finally {
+      compressedCacheGate.release()
+    }
+  }
+
   private async pruneCompressedCache(root: string): Promise<void> {
     let entries: string[]
     try {
@@ -1059,11 +1099,14 @@ export class VisionToolkitRuntime {
         removable: !info.isFile() || !name.startsWith(`${COMPRESSED_IMAGE_CACHE_VERSION}-`),
       })
     }
-    candidates.sort((a, b) => a.mtime - b.mtime)
-    let totalBytes = 0
-    let kept = 0
+    // Reserve pins before filling the remaining budget with newest entries.
+    const pinned = candidates.filter(candidate => compressedCachePins.has(join(root, candidate.name)))
+    candidates.sort((a, b) => b.mtime - a.mtime)
+    let totalBytes = pinned.reduce((total, candidate) => total + candidate.size, 0)
+    let kept = pinned.length
     const remove: string[] = []
     for (const candidate of candidates) {
+      if (compressedCachePins.has(join(root, candidate.name))) continue
       if (
         candidate.removable
         || totalBytes + candidate.size > COMPRESSED_IMAGE_CACHE_MAX_BYTES
@@ -1079,6 +1122,19 @@ export class VisionToolkitRuntime {
   }
 
   private async autoCompressImage(
+    image: { path: string; bytes: number },
+    policy: PathPolicy,
+    operation: OperationContext,
+  ): Promise<ImageInfo> {
+    await compressedCacheGate.acquire(operation.signal)
+    try {
+      return await this.prepareCompressedImage(image, policy, operation)
+    } finally {
+      compressedCacheGate.release()
+    }
+  }
+
+  private async prepareCompressedImage(
     image: { path: string; bytes: number },
     policy: PathPolicy,
     operation: OperationContext,
@@ -1112,9 +1168,10 @@ export class VisionToolkitRuntime {
         operation,
       )
       if (cached !== undefined) {
+        this.pinCompressedPath(cached.path, operation)
         return { ...cached, originalPath: image.path }
       }
-      await rm(join(root, entry), { force: true }).catch(() => {})
+      if (!compressedCachePins.has(join(root, entry))) await rm(join(root, entry), { force: true }).catch(() => {})
     }
     const staged = join(root, `.${prefix}-${randomUUID()}.partial`)
     let compressed: CompressedImageInfo
@@ -1145,11 +1202,16 @@ export class VisionToolkitRuntime {
         operation,
       )
       if (existing !== undefined) {
+        this.pinCompressedPath(existing.path, operation)
         await rm(staged, { force: true }).catch(() => {})
         return { ...existing, originalPath: image.path }
       }
+      if (compressedCachePins.has(finalPath)) {
+        throw new VisionToolkitError('input', 'compressed image changed while another operation was using it')
+      }
       await rm(finalPath, { force: true }).catch(() => {})
       await rename(staged, finalPath)
+      this.pinCompressedPath(finalPath, operation)
       await this.pruneCompressedCache(root)
       return {
         path: finalPath,
@@ -1363,8 +1425,8 @@ export class VisionToolkitRuntime {
     const stem = basename(image.originalPath, extension)
     const suffix = tool === 'vision_ground' ? 'ground' : 'detect'
     const finalPath = resolveOutputFile(output, policy, `${stem}.${suffix}.preview.png`, ['.png'])
-    assertDistinctOutput(image.path, finalPath)
-    assertDistinctOutput(image.originalPath, finalPath)
+    await assertDistinctOutput(image.path, finalPath)
+    await assertDistinctOutput(image.originalPath, finalPath)
     const staged = createStagedOutput(policy, '.png')
     try {
       const started = Date.now()
@@ -1575,8 +1637,8 @@ export class VisionToolkitRuntime {
         request.scale !== undefined && request.scale > 1 ? `${stem}.crop@${request.scale}x.png` : `${stem}.crop.png`,
         ['.png', '.jpg', '.jpeg'],
       )
-      assertDistinctOutput(image.path, finalPath)
-      assertDistinctOutput(image.originalPath, finalPath)
+      await assertDistinctOutput(image.path, finalPath)
+      await assertDistinctOutput(image.originalPath, finalPath)
       const outputExtension = extname(finalPath).toLowerCase()
       const staged = createStagedOutput(policy, outputExtension)
       try {
@@ -1638,8 +1700,8 @@ export class VisionToolkitRuntime {
       const extension = extname(image.originalPath).toLowerCase()
       const stem = basename(image.originalPath, extension)
       const finalPath = resolveOutputFile(request.output, policy, `${stem}.svg`, ['.svg'])
-      assertDistinctOutput(image.path, finalPath)
-      assertDistinctOutput(image.originalPath, finalPath)
+      await assertDistinctOutput(image.path, finalPath)
+      await assertDistinctOutput(image.originalPath, finalPath)
       const staged = createStagedOutput(policy, '.svg')
       try {
         const result = await this.runUpstream('trace', [
@@ -1994,8 +2056,8 @@ export class VisionToolkitRuntime {
       const extension = extname(image.originalPath).toLowerCase()
       const stem = basename(image.originalPath, extension)
       const finalPath = resolveOutputFile(request.output, policy, `${stem}.foreground.png`, ['.png'])
-      assertDistinctOutput(image.path, finalPath)
-      assertDistinctOutput(image.originalPath, finalPath)
+      await assertDistinctOutput(image.path, finalPath)
+      await assertDistinctOutput(image.originalPath, finalPath)
       const staged = createStagedOutput(policy, '.png')
       try {
         const result = await this.runUpstream('extract_foreground', [
@@ -2141,7 +2203,7 @@ export class VisionToolkitRuntime {
       }
       const stem = basename(source.path, extname(source.path))
       const finalPath = resolveOutputFile(request.output, policy, `${stem}.screenshot.png`, ['.png'])
-      assertDistinctOutput(source.path, finalPath)
+      await assertDistinctOutput(source.path, finalPath)
       const staged = createStagedOutput(policy, '.png')
       try {
         const result = await this.runUpstream('html_screenshot', [
@@ -2290,6 +2352,7 @@ export class VisionToolkitRuntime {
               method: 'GET',
               headers,
               signal: operation.signal,
+              redirect: 'error',
             })
             operation.metrics.upstreamMs += Date.now() - started
             await response.body?.cancel().catch(() => {})

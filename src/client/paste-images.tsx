@@ -5,6 +5,7 @@ import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type { InputTriggerSource } from '@deepseek-ai/dsh-client-ui-input-trigger/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import { readApiResponse } from './api-response.ts'
 
 const SOURCE = 'vision-toolkit-pasted-image'
 export const PASTE_IMAGES_ROUTE = '/_dsh/vision-toolkit/paste-images'
@@ -100,11 +101,14 @@ interface PasteRecord {
   status: 'ready' | 'copying' | 'copied' | 'error'
   error?: string | undefined
   absolutePath?: string | undefined
+  mediaReference?: string | undefined
 }
 
 interface PasteBatch {
   sessionId: string
+  input: PasteSessionInput
   records: PasteRecord[]
+  serializers: number
   inflight?: Promise<void> | undefined
   unsubscribe?: (() => void) | undefined
 }
@@ -121,11 +125,12 @@ interface PasteSwitchRoute {
 interface PasteVerdictValue {
   takeOver: boolean
   autoSwitch?: PasteSwitchRoute
+  sessionMedia?: { enabled: boolean; modalities: Record<'image' | 'video' | 'audio' | 'document', boolean> }
 }
 
 interface PasteResponse {
   ok: boolean
-  value?: { absolutePath?: string }
+  value?: { absolutePath?: string; mediaReference?: string }
   error?: { message?: string }
 }
 
@@ -256,6 +261,7 @@ function detectOffsetOfClipboardBoundary(state: PasteInputStateView, clipboardOf
 }
 
 type PasteDockProps = PropsRuntime<'conversation.input.dock'> & {
+  sessionId: string
   controller: PasteImageController
   remove: (occurrence: PasteOccurrence) => void
 }
@@ -354,7 +360,7 @@ function validateImages(files: readonly File[]): void {
 }
 
 /** Human label for one pasted file kind, used in reference text and confirm UI. */
-function fileKindLabel(file: File): string {
+function fileKindLabel(file: File): 'image' | 'video' | 'audio' | 'document' {
   const type = file.type.toLowerCase()
   if (type.startsWith('image/')) return 'image'
   if (type.startsWith('video/')) return 'video'
@@ -370,7 +376,7 @@ function fileKindLabel(file: File): string {
 }
 
 async function responseJson(response: Response): Promise<PasteResponse> {
-  const body = await response.json() as PasteResponse
+  const body = await readApiResponse<PasteResponse>(response)
   if (!response.ok || body.ok !== true) throw new Error(body.error?.message ?? `Image copy failed (${response.status})`)
   return body
 }
@@ -386,18 +392,22 @@ function occurrenceEnd(occurrence: PasteOccurrence): number {
 /** Owns browser File objects until DSH serializes the corresponding text references. */
 export class PasteImageController {
   private readonly records = new Map<string, PasteRecord>()
+  // ponytail: no public Host send-settlement hook; retain at most 256 File-free
+  // references for transport-failure restoration, replace with that hook when available.
+  private readonly completedReferences = new Map<string, { sessionId: string; label: string; text: string }>()
   private readonly listeners = new Set<() => void>()
   private revision = 0
   private readonly verdicts = new Map<string, {
     takeOver: boolean
     autoSwitch?: PasteSwitchRoute
+    sessionMedia?: PasteVerdictValue['sessionMedia']
     at: number
     pending: boolean
   }>()
   /** A paste awaiting the user's attach confirmation, rendered in the dock. */
   private pendingConfirm: PasteConfirmState | undefined
   /** Session-scoped “don't ask again”: later pastes attach immediately. */
-  private sessionAttachConfirmed = false
+  private readonly confirmedSessions = new Set<string>()
   /**
    * Session id last reported by the dock slot injection. 0.2.0-rc hosts
    * dropped `sessions.list.current`, so the session the dock renders for is
@@ -479,7 +489,7 @@ export class PasteImageController {
     files: readonly File[],
     cursor: number,
   ): number {
-    const batch: PasteBatch = { sessionId, records: [] }
+    const batch: PasteBatch = { sessionId, input, records: [], serializers: 0 }
     const draftBeforeReferences = input.state.getSnapshot().draft
     try {
       const before = input.state.getSnapshot().draft.slice(0, cursor)
@@ -506,21 +516,7 @@ export class PasteImageController {
         const suffix = input.state.getSnapshot().draft.slice(cursor)
         if (hasNext || (suffix !== '' && !/^\s/u.test(suffix))) cursor = this.insertText(input, ' ', cursor)
       }
-      batch.unsubscribe = input.state.subscribe(() => {
-        const alive = new Set(input.state.getSnapshot().occurrences
-          .filter(occurrence => occurrence.source === SOURCE)
-          .map(occurrence => occurrence.ref))
-        let changed = false
-        for (const record of batch.records) {
-          if (alive.has(record.ref) || record.batch.inflight !== undefined) continue
-          changed = this.records.delete(record.ref) || changed
-        }
-        if (batch.records.every(record => !this.records.has(record.ref)) && batch.inflight === undefined) {
-          batch.unsubscribe?.()
-          batch.unsubscribe = undefined
-        }
-        if (changed) this.changed()
-      })
+      batch.unsubscribe = input.state.subscribe(() => { this.pruneBatch(batch) })
       this.changed()
       return cursor
     } catch (error) {
@@ -550,7 +546,7 @@ export class PasteImageController {
     files: readonly File[],
     cursor: number,
   ): number {
-    const batch: PasteBatch = { sessionId, records: [] }
+    const batch: PasteBatch = { sessionId, input, records: [], serializers: 0 }
     const inserted: string[] = []
     try {
       for (const [index, file] of files.entries()) {
@@ -587,21 +583,7 @@ export class PasteImageController {
         // final chip stays behind the caret, like the textarea flow).
         if (index + 1 < files.length && snapshot.draft.slice(chipEnd, chipEnd + 1) === ' ') cursor += 1
       }
-      batch.unsubscribe = input.state.subscribe(() => {
-        const alive = new Set(input.state.getSnapshot().occurrences
-          .filter(occurrence => occurrence.source === SOURCE)
-          .map(occurrence => occurrence.ref))
-        let changed = false
-        for (const record of batch.records) {
-          if (alive.has(record.ref) || record.batch.inflight !== undefined) continue
-          changed = this.records.delete(record.ref) || changed
-        }
-        if (batch.records.every(record => !this.records.has(record.ref)) && batch.inflight === undefined) {
-          batch.unsubscribe?.()
-          batch.unsubscribe = undefined
-        }
-        if (changed) this.changed()
-      })
+      batch.unsubscribe = input.state.subscribe(() => { this.pruneBatch(batch) })
       this.changed()
       return cursor
     } catch (error) {
@@ -609,6 +591,26 @@ export class PasteImageController {
       for (const record of batch.records) this.records.delete(record.ref)
       throw error
     }
+  }
+
+  /** Release orphaned Files only after every detached serializer has finished. */
+  private pruneBatch(batch: PasteBatch): void {
+    if (batch.inflight !== undefined || batch.serializers > 0) return
+    const alive = new Set(batch.input.state.getSnapshot().occurrences
+      .filter(occurrence => occurrence.source === SOURCE)
+      .map(occurrence => occurrence.ref))
+    const retained = batch.records.filter(record => alive.has(record.ref))
+    let changed = false
+    for (const record of batch.records) {
+      if (!alive.has(record.ref)) changed = this.records.delete(record.ref) || changed
+    }
+    // Remove batch-owned references as well as map entries; listeners capture the batch.
+    batch.records = retained
+    if (retained.length === 0) {
+      batch.unsubscribe?.()
+      batch.unsubscribe = undefined
+    }
+    if (changed) this.changed()
   }
 
   /** Best-effort removal of one chip this batch already inserted (rollback path). */
@@ -639,7 +641,7 @@ export class PasteImageController {
     const entry = this.verdicts.get(verdictKey(sessionId, modelLabel))
     if (entry === undefined || entry.at === 0) return undefined
     if (Date.now() - entry.at > VERDICT_MAX_AGE_MS) return undefined
-    return { takeOver: entry.takeOver, ...(entry.autoSwitch === undefined ? {} : { autoSwitch: entry.autoSwitch }) }
+    return { takeOver: entry.takeOver, ...(entry.autoSwitch === undefined ? {} : { autoSwitch: entry.autoSwitch }), ...(entry.sessionMedia === undefined ? {} : { sessionMedia: entry.sessionMedia }) }
   }
 
   /**
@@ -688,11 +690,12 @@ export class PasteImageController {
     // Dedupe only on an in-flight request, never on freshness: the host's
     // model route can change under an unchanged Session id.
     if (cached?.pending) return
-    const entry = {
+    const entry: { pending: boolean; takeOver: boolean; at: number; autoSwitch?: PasteSwitchRoute; sessionMedia?: PasteVerdictValue['sessionMedia'] } = {
       pending: true,
       takeOver: cached ? cached.takeOver : false,
       at: cached ? cached.at : 0,
       ...(cached?.autoSwitch === undefined ? {} : { autoSwitch: cached.autoSwitch }),
+      ...(cached?.sessionMedia === undefined ? {} : { sessionMedia: cached.sessionMedia }),
     }
     this.verdicts.set(key, entry)
     void (async () => {
@@ -723,11 +726,12 @@ export class PasteImageController {
             return null
           }
           if (!response.ok) throw new Error(`paste policy ${response.status}`)
-          return response.json() as Promise<{ ok: true; value: PasteVerdictValue }>
+          return readApiResponse<{ ok: true; value: PasteVerdictValue }>(response)
         })
         .then((body) => {
           entry.pending = false
           if (body !== null) {
+            entry.sessionMedia = body.value.sessionMedia
             entry.takeOver = body.value.takeOver === true
             if (body.value.autoSwitch !== undefined) entry.autoSwitch = body.value.autoSwitch
             else delete entry.autoSwitch
@@ -739,6 +743,8 @@ export class PasteImageController {
         })
     })()
   }
+
+  invalidateMediaPolicy(): void { this.verdicts.clear(); this.prefetchVerdict() }
 
   /** Focus-time verdict prefetch for whichever Session the composer currently shows. */
   prefetchVerdict(): void {
@@ -845,8 +851,8 @@ export class PasteImageController {
   }
 
   /** The paste currently waiting for the attach confirmation, when any. */
-  confirmState(): Readonly<PasteConfirmState> | undefined {
-    return this.pendingConfirm
+  confirmState(sessionId = this.currentSessionId()): Readonly<PasteConfirmState> | undefined {
+    return this.pendingConfirm?.sessionId === sessionId ? this.pendingConfirm : undefined
   }
 
   /**
@@ -854,10 +860,14 @@ export class PasteImageController {
    * `remember`, every later paste in this page session attaches without
    * asking again.
    */
-  confirmAttach(remember: boolean): void {
+  confirmAttach(remember: boolean, sessionId = this.currentSessionId()): void {
     const pending = this.pendingConfirm
     if (pending === undefined) return
-    if (remember) this.sessionAttachConfirmed = true
+    if (pending.sessionId !== sessionId || pending.sessionId !== this.currentSessionId()) {
+      this.cancelConfirm()
+      return
+    }
+    if (remember) this.confirmedSessions.add(pending.sessionId)
     this.pendingConfirm = undefined
     this.changed()
     this.takeoverPaste(pending.sessionId, pending.target, pending.files, pending.text)
@@ -887,6 +897,13 @@ export class PasteImageController {
     // Only a fresh host verdict changes the image flow; the native attachment
     // flow stays the default while the host is unconfirmed.
     const verdict = this.verdictFor(sessionId, modelLabel)
+    // Known opt-outs remain binding while a route verdict is stale or refreshing.
+    const sessionMedia = this.verdicts.get(verdictKey(sessionId, modelLabel))?.sessionMedia
+    if (sessionMedia !== undefined && (!sessionMedia.enabled || files.some(file => !sessionMedia.modalities[fileKindLabel(file)]))) {
+      event.preventDefault(); event.stopImmediatePropagation()
+      this.inputFor(sessionId).notify('error', 'Этот тип медиа выключен в сессии. Включите его в панели «Медиа».')
+      return true
+    }
     // The host composer attaches images natively. Everything else — video,
     // audio, documents — and any image paste on a route confirmed text-only
     // (takeover or variant-autoSwitch verdict) needs the plugin flow, with
@@ -912,7 +929,7 @@ export class PasteImageController {
     if (input.state.getSnapshot().phase !== 'plain') return true
 
     const text = (event.clipboardData?.getData('text/plain') ?? '').replaceAll('\uFFFC', '')
-    if (this.sessionAttachConfirmed) {
+    if (this.confirmedSessions.has(sessionId)) {
       this.takeoverPaste(sessionId, target, files, text)
       return true
     }
@@ -953,6 +970,7 @@ export class PasteImageController {
       : { start: current.offset, end: occurrenceEnd(current), draftRev: snapshot.draftRev }
     if (!shellInsertText(input, '', span)) return
     this.records.delete(occurrence.ref)
+    this.completedReferences.delete(occurrence.ref)
     this.changed()
   }
 
@@ -988,6 +1006,7 @@ export class PasteImageController {
               throw new Error('Image copy response contained an invalid path')
             }
             record.absolutePath = absolutePath
+            record.mediaReference = typeof body.value?.mediaReference === 'string' ? body.value.mediaReference : undefined
             record.status = 'copied'
             record.error = undefined
             return undefined
@@ -1003,6 +1022,7 @@ export class PasteImageController {
         if (failure !== undefined) throw failure
       } finally {
         batch.inflight = undefined
+        this.pruneBatch(batch)
         this.changed()
       }
     })()
@@ -1012,24 +1032,44 @@ export class PasteImageController {
 
   private async serialize(ref: string, signal: AbortSignal): Promise<string> {
     const record = this.records.get(ref)
-    if (record === undefined) throw new Error('Pasted file is no longer available in this browser tab')
-    await this.upload(record.batch, signal)
-    if (record.absolutePath === undefined) throw new Error('Pasted file was not copied into the workspace')
-    return `[Pasted ${fileKindLabel(record.file)} available at absolute path: ${JSON.stringify(record.absolutePath)}]`
+    if (record === undefined) {
+      const completed = this.completedReferences.get(ref)
+      // Only a restored chip in its original live session can reuse a copied path.
+      if (completed !== undefined && this.inputFor(completed.sessionId).state.getSnapshot().occurrences
+        .some(row => row.source === SOURCE && row.ref === ref && row.label === completed.label)) return completed.text
+      throw new Error('Pasted file is no longer available in this browser tab')
+    }
+    const batch = record.batch
+    batch.serializers += 1
+    try {
+      await this.upload(batch, signal)
+      if (record.absolutePath === undefined) throw new Error('Pasted file was not copied into the workspace')
+      const text = record.mediaReference ?? `[Pasted ${fileKindLabel(record.file)} available at absolute path: ${JSON.stringify(record.absolutePath)}]`
+      this.completedReferences.delete(ref)
+      this.completedReferences.set(ref, { sessionId: batch.sessionId, label: record.label, text })
+      if (this.completedReferences.size > 256) this.completedReferences.delete(this.completedReferences.keys().next().value!)
+      return text
+    } finally {
+      batch.serializers -= 1
+      if (batch.serializers === 0) {
+        // The host restores a failed detached draft in its rejection microtask.
+        // Prune after that restoration, not before the awaiting host can see it.
+        setTimeout(() => { this.pruneBatch(batch) }, 0)
+      }
+    }
   }
 }
 
 /** One pending paste awaiting the user's attach confirmation. */
-function PasteConfirmCard({ controller, kinds, count }: {
+function PasteConfirmCard({ controller, sessionId, kinds, count }: {
   controller: PasteImageController
+  sessionId: string
   kinds: readonly string[]
   count: number
 }): ReactNode {
   const [remember, setRemember] = useState(false)
   const kindText = kinds.join(', ')
-  const reason = kinds.length === 1 && kinds[0] === 'image'
-    ? 'текущая модель не поддерживает vision-вход напрямую'
-    : 'видео, аудио и документы прикрепляются как файлы для Vision Toolkit'
+  const reason = 'медиа будет передано согласно настройкам этой сессии'
   return <div className="dvt-paste-confirm" role="alertdialog" aria-label="Подтверждение вставки">
     <span className="dvt-paste-confirm-text">
       Прикрепить {kindText} ({count}) для использования плагином Vision Toolkit — {reason}.
@@ -1043,7 +1083,7 @@ function PasteConfirmCard({ controller, kinds, count }: {
       <span>Больше не показывать в этой сессии</span>
     </label>
     <div className="dvt-paste-confirm-actions">
-      <button type="button" className="dvt-paste-confirm-attach" onClick={() => { controller.confirmAttach(remember) }}>Прикрепить</button>
+      <button type="button" className="dvt-paste-confirm-attach" onClick={() => { controller.confirmAttach(remember, sessionId) }}>Прикрепить</button>
       <button type="button" className="dvt-paste-confirm-cancel" onClick={() => { controller.cancelConfirm() }}>Отмена</button>
     </div>
   </div>
@@ -1052,14 +1092,16 @@ function PasteConfirmCard({ controller, kinds, count }: {
 /** Minimal per-file progress, failure, removal, and attach-confirmation UI above the composer. */
 export function PasteImageDock(props: PasteDockProps): ReactNode {
   useSyncExternalStore(props.controller.subscribe, props.controller.snapshot)
-  const confirm = props.controller.confirmState()
+  const confirm = props.controller.confirmState(props.sessionId)
   const occurrences = props.input.occurrences.filter(occurrence => occurrence.source === SOURCE)
   const records = props.controller.recordsFor(occurrences)
   if (confirm === undefined && records.length === 0) return null
   return <div className="dvt-paste-dock" role="status" aria-label="Pasted files">
     {confirm === undefined ? null : (
       <PasteConfirmCard
+        key={confirm.sessionId}
         controller={props.controller}
+        sessionId={props.sessionId}
         kinds={confirm.kinds}
         count={confirm.files.length}
       />
@@ -1117,9 +1159,12 @@ export function installPasteImages(ctx: ClientContext): void {
     const listener = (event: ClipboardEvent): void => { controller.handlePaste(event) }
     // A focus-time prefetch has the verdict ready before the first paste can land.
     const onFocusIn = (): void => { controller.prefetchVerdict() }
+    const onMediaChange = (): void => { controller.invalidateMediaPolicy() }
+    document.addEventListener('dvt-session-media-changed', onMediaChange)
     document.addEventListener('paste', listener, true)
     document.addEventListener('focusin', onFocusIn, true)
     return () => {
+      document.removeEventListener('dvt-session-media-changed', onMediaChange)
       document.removeEventListener('paste', listener, true)
       document.removeEventListener('focusin', onFocusIn, true)
     }
@@ -1134,6 +1179,7 @@ export function installPasteImages(ctx: ClientContext): void {
       // `sessions.list.current`.
       controller.attachSession(String(sessionId))
       return {
+        sessionId: String(sessionId),
         controller,
         remove: (occurrence: PasteOccurrence) => { controller.remove(String(sessionId), occurrence) },
       }

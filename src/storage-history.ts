@@ -72,16 +72,15 @@ export class StorageHistoryStore {
   private persistenceTicket = 0
   private warned = false
 
-  constructor(private readonly ctx: Context) {
+  constructor(private readonly ctx: Context, private readonly onRestored?: () => void) {
     if (typeof ctx.inject !== 'function') return
     this.storageFiber = ctx.inject(['storageDomain'], async (storageCtx: Context) => {
       const domain = await storageCtx.storageDomain.open(storageHistoryDomainSpec)
       const binding: StorageBinding = { accepting: true, global: domain.global }
       this.storage = binding
       try {
-        if (this.desiredRoots !== undefined) {
-          await this.write(binding, this.desiredRoots, this.persistenceTicket)
-        }
+        await this.write(binding, this.desiredRoots ?? [], this.persistenceTicket)
+        this.onRestored?.()
       } catch (error) {
         this.storage = undefined
         await domain.close()
@@ -107,7 +106,7 @@ export class StorageHistoryStore {
    */
   async restore(config: VisionToolkitConfig): Promise<VisionToolkitConfig> {
     const binding = await this.prepareStorage()
-    return restoreDurableStorageHistory(config, binding?.global.get().roots ?? [])
+    return restoreDurableStorageHistory(config, [...new Set([...(this.desiredRoots ?? []), ...(binding?.global.get().roots ?? [])])])
   }
 
   /**
@@ -116,7 +115,7 @@ export class StorageHistoryStore {
    * @returns false when no storage-domain is available; true after persistence or when there are no roots.
    */
   async persist(config: VisionToolkitConfig): Promise<boolean> {
-    const roots = configuredStorageRoots(config)
+    const roots = [...new Set([...(this.desiredRoots ?? []), ...configuredStorageRoots(config)])]
     const ticket = ++this.persistenceTicket
     this.desiredRoots = roots
     if (roots.length === 0) return true
@@ -150,8 +149,11 @@ export class StorageHistoryStore {
     return this.enqueueMutation(async () => {
       if (!binding.accepting) throw new Error('the storage-domain provider changed while storage history was pending')
       if (ticket !== this.persistenceTicket) return
-      if (sameRoots(binding.global.get().roots, roots)) return
-      await binding.global.set({ roots: [...roots] })
+      const current = binding.global.get().roots
+      const merged = [...new Set([...current, ...roots, ...(this.desiredRoots ?? [])])]
+      this.desiredRoots = merged
+      if (sameRoots(current, merged)) return
+      await binding.global.set({ roots: merged })
     })
   }
 

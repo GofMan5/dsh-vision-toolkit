@@ -89,6 +89,8 @@ export interface VisionToolkitConfig {
      */
     modelCapabilities?: ModelCapabilityOverrideMap
   }
+  /** Provider routes explicitly allowed to use the plugin relay for native media/generation. Empty disables native routing. */
+  nativeProviders?: string[]
   /** Vision output language (`zh` or `en`). */
   language?: 'zh' | 'en'
   /** Single remote/upstream call budget in milliseconds. */
@@ -170,6 +172,7 @@ export const LegacyConfig: Schema<VisionToolkitConfig> = z.object({
       document: z.boolean(),
     })),
   }),
+  nativeProviders: z.array(z.string()).default([]),
   language: z.union(['zh', 'en'] as const).default('zh'),
   timeoutMs: z.number().default(30000),
   maxImageBytes: z.number().default(4194304),
@@ -243,6 +246,7 @@ export interface ResolvedVisionToolkitConfig {
     /** Normalized per-model input-modality overrides (lowercased model ids). */
     modelCapabilities: ModelCapabilityOverrideMap
   }
+  nativeProviders: string[]
   language: 'zh' | 'en'
   timeoutMs: number
   maxImageBytes: number
@@ -515,6 +519,7 @@ export function resolveConfig(config: VisionToolkitConfig = {}): ResolvedVisionT
       anthropicThinking, userAgent, headers, sessionHeaders,
       modelCapabilities,
     },
+    nativeProviders: [...new Set((config.nativeProviders ?? []).map(id => id.trim()).filter(Boolean))],
     language,
     timeoutMs,
     maxImageBytes,
@@ -544,7 +549,11 @@ export function retainedStorageHistory(
   previous: VisionToolkitConfig,
 ): string[] {
   const resolvedNext = resolveConfig(next)
-  const resolvedPrevious = resolveConfig(previous)
+  // A rejected projected Settings value may contain unrelated invalid fields.
+  const resolvedPrevious = resolveConfig({
+    ...(previous.storageDir === undefined ? {} : { storageDir: previous.storageDir }),
+    ...(previous.storageHistory === undefined ? {} : { storageHistory: previous.storageHistory }),
+  })
   return [...new Set([
     ...resolvedPrevious.storageHistory,
     ...resolvedNext.storageHistory,

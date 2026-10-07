@@ -35,6 +35,9 @@
 - **粘贴媒体确认对话框。** 在当前模型无法原生接收时，粘贴截图、视频、音频或文档会在输入框上方弹出确认卡片——«Прикрепить … для использования плагином Vision Toolkit»，带 «Больше не показывать в этой сессии» 复选框。确认后以工作区路径引用附加文件，不切换模型；静默自动切换到变体路由的机制已移除，变体条目仍可手动选择。
 - **视频、音频和文档直接粘贴进输入框**，每个文件上限 100 MiB，引用文本带类型标注，agent 可直接交给 `vision_glance`。
 - **分支仓库的应用内更新。** GitHub git 安装支持 **Check for updates** 和一键更新：检查读取仓库默认分支头（commit + 版本），安装固定到解析出的 commit，pnpm 不会再复用过期的浮动解析。npm 安装沿用原有流程；本地/workspace/非 GitHub URL 安装仍需手动。
+- **已认证的 Web 边界。** 设置/凭证/健康检查/更新、粘贴上传/策略、显示配置与会话媒体 HTTP 路由使用宿主的 `connection.requestRejection` Cookie 与信任检查；没有 Origin 的已认证 Desktop 转发仍可用。缺少此 API 的旧宿主返回 `503`，peer 版本范围不代表这些宿主支持完整 Web 功能。签名 artifact URL 保持独立的 capability 边界。
+- **服务端签发粘贴权限。** 自动 proxy/direct 投影仅接受真实用户消息中的签名引用，绑定当前会话身份、工作目录、精确路径、字节数及 SHA-256。历史无签名路径仅作为文本：请重新粘贴以自动路由，或显式调用已允许的视觉工具；文件改变后拒绝上传。带凭证的视觉/模型目录请求拒绝重定向，请直接配置最终端点。
+- **原生生成与超时。** 会话中开启原生图片生成会让所有普通回合（含纯文本和工具回合）经过插件的 Responses 中继，不仅是明确要求生图的提示。普通 native 请求使用 `max(timeoutMs, 120000)` 毫秒无进展超时，开启生图后为 `max(timeoutMs, 300000)`；收到数据字节或 SSE keepalive 会重置计时。失败/取消返回宿主的终止 error/aborted chunk，插件不会自动重发可能付费的生图请求。错误保留安全分类与 HTTP 状态，不回显上游原文；上下文溢出保留宿主压缩用的 `CONTEXT_WINDOW_EXCEEDED`。`NATIVE_MEDIA_TIMEOUT` 表示插件无进展超时，`NATIVE_MEDIA_HOST_TIMEOUT` 表示调用方期限，`NATIVE_MEDIA_RELAY_TIMEOUT` 表示中继/上游超时。
 - **聊天侧媒体如何到达模型。** DSH 宿主附件契约保持 text+image；视频、音频和文档附件以带工作区路径的持久文件句柄到达，纯文本聊天模型看到路径后调用 `vision_glance`——因为*视觉*模型接受该模态，所以现在这条路是通的。
 
 > **外部运行时说明：** 附带的 `agent-vision-toolkit` 快照包含本分支的多模态内容块改动，`UPSTREAM_MANIFEST.json` 已重新生成，因此 `runtime.mode: external` 需要本分支 `vendor/agent-vision-toolkit` 目录的精确导出（干净的上游检出不匹配）。默认的 managed 模式不受影响。
@@ -74,6 +77,7 @@ dsh plugin --profile web add github:GofMan5/dsh-vision-toolkit
 
 ## 最近更新
 
+- **fork 0.5.0 · 会话媒体与可靠的原生流：** 会话级 opt-out、allowlist 控制的当前模型生图、紧凑且对齐输入框的媒体面板、按进展重置超时、安全中继错误分类与 R01–R25 审计修复。管理路由要求宿主认证，历史无签名粘贴标记只作文本处理。兼容性限制与完整修复见 [CHANGELOG.md](CHANGELOG.md)。
 - **fork 0.4.1 · 全面评审加固：** 来源围栏完整对齐宿主 `/api` 边界（封堵 DNS rebinding、设置快照 GET 也纳入围栏），registry 更新精确固定版本，`.markdown` 产物可正常交付，透明路由在 DSH 0.2.0-rc 宿主上也能隐藏重复的模型条目（0.2.1–0.4.0 的完整列表见 [CHANGELOG.md](CHANGELOG.md)：桌面端来源修复、附加确认对话框与媒体粘贴、git 应用内更新、变体投票修复、Lexical 输入框粘贴适配）。
 - **fork 0.2.0 · 中继模型选择 + 能力矩阵：** 设置可从中继拉取模型目录（`GET /models`），每个模型带检测到的输入模态，按模型覆盖声明接受哪些输入。`vision_glance` 除图片外还接受视频、音频和文档，路由到 `video_url` / `input_audio` / `file`（或 `input_file` / Anthropic document）内容块；不支持的模态在发送任何字节之前以可操作的错误失败。
 - **2026-08-19 · 透明变体路由默认开启：** 模型选择器默认只显示每个模型一项并保留原模型名，粘贴图片、历史图片和内置 `read_image` 工具都能直接使用，不再需要手动切换到 `(Vision Toolkit)` 变体；如需恢复显式条目，可在 设置 → 高级设置 → 图片输入 关闭“保留原模型名并自动启用图片能力”。

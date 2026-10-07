@@ -42,6 +42,8 @@ export interface VisionToolkitConfig {
          */
         modelCapabilities?: ModelCapabilityOverrideMap;
     };
+    /** Provider routes explicitly allowed to use the plugin relay for native media/generation. Empty disables native routing. */
+    nativeProviders?: string[];
     /** Vision output language (`zh` or `en`). */
     language?: 'zh' | 'en';
     /** Single remote/upstream call budget in milliseconds. */
@@ -126,6 +128,7 @@ export interface ResolvedVisionToolkitConfig {
         /** Normalized per-model input-modality overrides (lowercased model ids). */
         modelCapabilities: ModelCapabilityOverrideMap;
     };
+    nativeProviders: string[];
     language: 'zh' | 'en';
     timeoutMs: number;
     maxImageBytes: number;

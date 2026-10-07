@@ -1,8 +1,8 @@
-import { createServer, type Server } from 'node:http'
-import { chmod, mkdtemp, mkdir, readFile, rm, symlink, unlink, writeFile } from 'node:fs/promises'
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
+import { chmod, mkdtemp, mkdir, open, readFile, rm, symlink, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   ArtifactAccessController,
   PRESENTATION_META_KEY,
@@ -15,10 +15,18 @@ import { probeSymlinkSupport } from './symlink-capability.ts'
 // the symlink-rejection test below skips on hosts without the privilege.
 const symlinksAvailable = await probeSymlinkSupport()
 
+// Track real fixture handles without depending on platform fd accounting.
+vi.mock('node:fs/promises', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return { ...actual, open: vi.fn(actual.open) }
+})
+
 const roots: string[] = []
 const servers: Server[] = []
 
 afterEach(async () => {
+  vi.restoreAllMocks()
+  vi.mocked(open).mockClear()
   await Promise.all(servers.splice(0).map(server => new Promise<void>((resolve) => { server.close(() => { resolve() }) })))
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
@@ -95,6 +103,52 @@ describe('ArtifactAccessController', () => {
     const download = await fetch(`${base}${grant.downloadUrl}`)
     expect(download.status).toBe(200)
     expect(download.headers.get('content-disposition')).toContain('attachment')
+  })
+
+  it('R25 rejects malformed Unicode capabilities before opening a file', async () => {
+    const { root, descriptor } = await fixture('preview.png', 'fixture', {
+      mimeType: 'image/png', kind: 'image', previewIntent: 'image',
+    })
+    const controller = new ArtifactAccessController(await prepareArtifactAccessKey(join(root, 'state')))
+    const filename = '\ud800.png'
+    const malformed = { ...descriptor, filename, path: join(dirname(descriptor.path), filename) }
+    const token = controller.sign(malformed)
+    expect(controller.verify(token)).toBeUndefined()
+    const response = { writeHead: vi.fn(), end: vi.fn() }
+    await controller.handle({ method: 'HEAD', url: `/_dsh/vision-toolkit/artifacts/${token}` } as IncomingMessage,
+      response as unknown as ServerResponse)
+    expect(response.writeHead).toHaveBeenCalledWith(404)
+    expect(open).not.toHaveBeenCalled()
+  })
+
+  it.each(['setHeader', 'writeHead'] as const)('R25 closes the opened handle when %s setup fails', async (method) => {
+    const { root, descriptor } = await fixture('截图-😀.png', 'fixture', {
+      mimeType: 'image/png', kind: 'image', previewIntent: 'image',
+    })
+    const controller = new ArtifactAccessController(await prepareArtifactAccessKey(join(root, 'state')))
+    const failure = new Error('fixture header failure')
+    const response = {
+      setHeader: vi.fn(() => { if (method === 'setHeader') throw failure }),
+      writeHead: vi.fn(() => { if (method === 'writeHead') throw failure }),
+    }
+    await expect(controller.handle({ method: 'HEAD', url: `/_dsh/vision-toolkit/artifacts/${controller.sign(descriptor)}` } as IncomingMessage,
+      response as unknown as ServerResponse)).rejects.toBe(failure)
+    const opened = await vi.mocked(open).mock.results.at(-1)!.value
+    expect(opened.fd).toBe(-1)
+  })
+
+  it('R25 closes normal HEAD responses and safely encodes valid Unicode', async () => {
+    const { root, descriptor } = await fixture('截图-😀.png', 'fixture', {
+      mimeType: 'image/png', kind: 'image', previewIntent: 'image',
+    })
+    const controller = new ArtifactAccessController(await prepareArtifactAccessKey(join(root, 'state')))
+    const response = { setHeader: vi.fn(), writeHead: vi.fn(), end: vi.fn() }
+    await controller.handle({ method: 'HEAD', url: `/_dsh/vision-toolkit/artifacts/${controller.sign(descriptor)}` } as IncomingMessage,
+      response as unknown as ServerResponse)
+    expect(response.writeHead).toHaveBeenCalledWith(200)
+    expect(response.setHeader).toHaveBeenCalledWith('Content-Disposition', expect.stringContaining(encodeURIComponent(descriptor.filename)))
+    const opened = await vi.mocked(open).mock.results.at(-1)!.value
+    expect(opened.fd).toBe(-1)
   })
 
   it('keeps capabilities valid after a process-style key reload', async () => {

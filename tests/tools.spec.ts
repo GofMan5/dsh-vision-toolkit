@@ -37,6 +37,16 @@ function fakeCredentials(): Credentials {
   } as unknown as Credentials
 }
 
+/**
+ * The entry `inject` declares `llm` and `attachments` (session-media routing),
+ * so the real loader suspends the plugin until both exist — exactly like the
+ * dsh host, which always provides them from its base bundle.
+ */
+function provideMediaServices(ctx: Context): void {
+  ctx.provide('llm', {} as never)
+  ctx.provide('attachments', {} as never)
+}
+
 class ProbeSubprocessService extends SubprocessRuntime {
   override spawn(spec: SubprocessSpawnSpec): SubprocessHandle {
     const command = spec.argv.join('\n')
@@ -226,6 +236,7 @@ async function setupContext(toolkitPath: string) {
   await ctx.plugin(ProbeSubprocessService)
   await ctx.plugin(MemorySettings)
   ctx.provide('credentials', fakeCredentials())
+  provideMediaServices(ctx)
   const fiber = await ctx.plugin(VisionToolkit, {
     provider: {
       baseUrl: 'https://vision.example/v1',
@@ -468,6 +479,7 @@ describe('dsh-vision-toolkit plugin lifecycle', () => {
     const subprocessFiber = await ctx.plugin(BlockingSubprocessService)
     const subprocess = subprocessFiber.ctx.subprocess as BlockingSubprocessService
     ctx.provide('credentials', fakeCredentials())
+  provideMediaServices(ctx)
     const fiber = await ctx.plugin(VisionToolkit, {
       provider: {
         baseUrl: 'https://vision.example/v1',
@@ -476,7 +488,8 @@ describe('dsh-vision-toolkit plugin lifecycle', () => {
       },
       runtime: { mode: 'external', agentVisionToolkitPath: BUNDLED_UPSTREAM, python: 'python3' },
     })
-    const agent = await registerAgent(ctx, 'dispose-active')
+    const session = ctx.sessions.create(SessionId('dispose-active'))
+    const agent = await registerAgent(ctx, 'dispose-active', session)
     await loadVisionSkill(ctx, agent)
     const pending = ctx.tools.execute({
       signal: new AbortController().signal,
@@ -516,6 +529,7 @@ describe('dsh-vision-toolkit plugin lifecycle', () => {
     await ctx.plugin(ProbeSubprocessService)
     await ctx.plugin(MemorySettings)
     ctx.provide('credentials', fakeCredentials())
+  provideMediaServices(ctx)
     await expect(ctx.plugin(VisionToolkit, {
       provider: { baseUrl: 'not-a-url', credential: 'K', model: 'm' },
     })).rejects.toMatchObject({ code: 'config' })

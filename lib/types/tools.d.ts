@@ -43,5 +43,5 @@ export type VisionToolkitPresentationProjector = (value: JsonValue) => JsonValue
  * @param lifecycleSignal - Plugin lifetime; aborting it cancels every active tool call.
  * @returns Native tool definitions registered as one lifecycle generation.
  */
-export declare function createVisionTools(source: VisionToolkitRuntimeSource, projectPresentation?: VisionToolkitPresentationProjector, lifecycleSignal?: AbortSignal): ReturnType<typeof defineTool>[];
+export declare function createVisionTools(source: VisionToolkitRuntimeSource, projectPresentation?: VisionToolkitPresentationProjector, lifecycleSignal?: AbortSignal, assertInputs?: (sessionId: string | undefined, paths: readonly string[]) => Promise<void>): ReturnType<typeof defineTool>[];
 //# sourceMappingURL=tools.d.ts.map

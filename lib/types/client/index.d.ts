@@ -268,6 +268,7 @@ interface SettingsValue {
         sessionHeaders?: string[];
         modelCapabilities?: Record<string, Partial<ClientCapabilities>>;
     };
+    nativeProviders?: string[];
     language?: 'zh' | 'en';
     timeoutMs?: number;
     maxImageBytes?: number;

@@ -145,5 +145,5 @@ export declare function commitStagedDirectory(staged: string, finalPath: string,
  */
 export declare function commitStagedOutput(staged: string, finalPath: string, policy: PathPolicy): Promise<void>;
 /** Reject an output that would overwrite its own input file. */
-export declare function assertDistinctOutput(input: string, output: string): void;
+export declare function assertDistinctOutput(input: string, output: string): Promise<void>;
 //# sourceMappingURL=paths.d.ts.map

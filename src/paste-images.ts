@@ -9,6 +9,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-session'
 import { resolveWorkspaceStorage } from './paths.ts'
 import { sameOriginPost } from './web-request.ts'
+import type { MediaReferenceAuthority } from './media-references.ts'
 
 /** Exact route used by the browser paste integration. */
 export const PASTE_IMAGES_ROUTE = '/_dsh/vision-toolkit/paste-images'
@@ -65,7 +66,7 @@ export const MAX_PASTE_IMAGE_BYTES = 20 * 1024 * 1024
 
 interface PasteImageResponse {
   ok: true
-  value: { absolutePath: string; filename: string; bytes: number }
+  value: { absolutePath: string; filename: string; bytes: number; mediaReference?: string }
 }
 
 interface PasteImageFailure {
@@ -334,6 +335,7 @@ export class PastedImageBackend {
   constructor(
     private readonly ctx: Context,
     private readonly runtime: PasteImageRuntime,
+    private readonly mediaReferences?: MediaReferenceAuthority,
   ) {}
 
   private storageGeneration(): PasteStorageGeneration {
@@ -381,7 +383,8 @@ export class PastedImageBackend {
         const current = this.storageGeneration()
         if (current.generation === storage.generation && current.storageDir === storage.storageDir) {
           const absolutePath = join(directory.visibleRoot, basename(managedPath))
-          responseJson(res, 201, { ok: true, value: { absolutePath, filename, bytes: size } })
+          const mediaReference = await this.mediaReferences?.issue(this.ctx, sessionId, absolutePath, size)
+          responseJson(res, 201, { ok: true, value: { absolutePath, filename, bytes: size, ...(mediaReference === undefined ? {} : { mediaReference }) } })
           return
         }
         const nextDirectory = await sessionPasteRoot(this.ctx, sessionId, current.storageDir)

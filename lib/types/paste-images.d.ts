@@ -1,6 +1,7 @@
 /** Plugin-managed storage for files pasted into the DSH Web composer. */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Context } from '@deepseek-ai/cordis';
+import type { MediaReferenceAuthority } from './media-references.ts';
 /** Exact route used by the browser paste integration. */
 export declare const PASTE_IMAGES_ROUTE = "/_dsh/vision-toolkit/paste-images";
 /**
@@ -84,7 +85,8 @@ export interface PasteImageRuntime {
 export declare class PastedImageBackend {
     private readonly ctx;
     private readonly runtime;
-    constructor(ctx: Context, runtime: PasteImageRuntime);
+    private readonly mediaReferences?;
+    constructor(ctx: Context, runtime: PasteImageRuntime, mediaReferences?: MediaReferenceAuthority | undefined);
     private storageGeneration;
     private uploadCap;
     handle(req: IncomingMessage, res: ServerResponse): Promise<void>;

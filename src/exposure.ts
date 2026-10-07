@@ -137,11 +137,20 @@ function hasLoadedVisionSkill(session: Session): boolean {
       continue
     }
     if (event.type === 'tool/result') {
-      const [block] = event.data.message.content
-      if (block?.type === 'tool-result'
-        && block.isError !== true
-        && nativeCalls.has(String(block.toolCallId))
-        && containsBundledSkillContent(block.content)) return true
+      // Host 0.2 stores the call identity and error flag on the raw tool
+      // message; older hosts wrap them in the first tool-result block.
+      const message: unknown = event.data.message
+      if (!isRecord(message) || !Array.isArray(message.content)) continue
+      const [block] = message.content
+      const result = message.role === 'tool'
+        ? message
+        : isRecord(block) && block.type === 'tool-result' ? block : undefined
+      if (result !== undefined
+        && (message.role === 'tool' ? result.isError === false : result.isError !== true)
+        && typeof result.toolCallId === 'string'
+        && nativeCalls.has(result.toolCallId)
+        && Array.isArray(result.content)
+        && containsBundledSkillContent(result.content)) return true
       continue
     }
     if (isBundledSkillPtcDispatch(event)) return true

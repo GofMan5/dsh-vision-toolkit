@@ -33,8 +33,10 @@ import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import { installPasteImages } from './paste-images.tsx'
+import { installSessionMediaControls } from './session-media.tsx'
 import { installModelVariantsHider } from './model-variants-hider.ts'
 import { resetDisplayConfigCache } from './display-config.ts'
+import { readApiResponse } from './api-response.ts'
 
 const NS = 'vision-toolkit'
 const SETTINGS_ROUTE = '/_dsh/vision-toolkit/settings'
@@ -533,6 +535,7 @@ interface SettingsValue {
     sessionHeaders?: string[]
     modelCapabilities?: Record<string, Partial<ClientCapabilities>>
   }
+  nativeProviders?: string[]
   language?: 'zh' | 'en'
   timeoutMs?: number
   maxImageBytes?: number
@@ -1053,7 +1056,7 @@ async function apiRequest<T>(init?: RequestInit, timeoutMs?: number): Promise<T>
     ...init,
     ...(timeoutMs !== undefined && init?.signal === undefined ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
   })
-  const body = await response.json() as ApiSuccess<T> | ApiFailure
+  const body = await readApiResponse<ApiSuccess<T> | ApiFailure>(response)
   if (!response.ok || !body.ok) {
     const failure = body as ApiFailure
     throw new Error(failure.error?.message ?? `Vision Toolkit request failed with HTTP ${response.status}`)
@@ -1101,11 +1104,17 @@ export class VisionSettingsController {
    * discard their rejected draft. Background refreshes keep unsaved edits.
    */
   async load(explicit = false): Promise<void> {
+    // A mutation owns the snapshot until its response (including credentials) settles.
+    if (this.state.action === 'save') return
     const generation = ++this.generation
     this.set({ ...this.state, status: 'loading', error: undefined, message: undefined })
     try {
       const snapshot = await apiRequest<SettingsSnapshot>(undefined, 30_000)
       if (generation !== this.generation) return
+      if (this.state.snapshot !== undefined && snapshot.settings.revision < this.state.snapshot.settings.revision) {
+        this.set({ ...this.state, status: 'ready' })
+        return
+      }
       // Keep the loaded relay catalog: a background refresh (connection
       // reset, credential update) must not make the model picker vanish.
       this.set({
@@ -1134,7 +1143,10 @@ export class VisionSettingsController {
     credentialValue: string | undefined,
     writeSettings: boolean,
   ): Promise<boolean> {
-    this.set({ ...this.state, action: 'save', error: undefined, message: undefined })
+    if (this.state.action === 'save') return false
+    // Invalidate GETs that began before this write, even when they resolve first.
+    ++this.generation
+    this.set({ ...this.state, status: this.state.snapshot === undefined ? 'idle' : 'ready', action: 'save', error: undefined, message: undefined })
     let snapshot = this.state.snapshot
     try {
       if (writeSettings) {
@@ -1286,6 +1298,7 @@ interface Draft {
   userAgent: string
   providerHeaders: Record<string, string>
   providerSessionHeaders: string[]
+  nativeProviders: string[]
   modelCapabilities: Record<string, Partial<ClientCapabilities>>
   language: 'zh' | 'en'
   timeoutMs: string
@@ -1315,6 +1328,7 @@ function draftOf(value: SettingsValue): Draft {
     userAgent: value.provider?.userAgent ?? DEFAULT_USER_AGENT,
     providerHeaders: { ...(value.provider?.headers ?? {}) },
     providerSessionHeaders: [...(value.provider?.sessionHeaders ?? [])],
+    nativeProviders: [...(value.nativeProviders ?? [])],
     modelCapabilities: Object.fromEntries(
       Object.entries(value.provider?.modelCapabilities ?? {})
         .map(([key, entry]) => [key, { ...entry }]),
@@ -1372,6 +1386,7 @@ function valueOf(draft: Draft, t: Translate): SettingsValue {
       ...(draft.providerSessionHeaders.length === 0 ? {} : { sessionHeaders: [...draft.providerSessionHeaders] }),
       ...(Object.keys(draft.modelCapabilities).length === 0 ? {} : { modelCapabilities: draft.modelCapabilities }),
     },
+    ...(draft.nativeProviders.length === 0 ? {} : { nativeProviders: [...draft.nativeProviders] }),
     language: draft.language,
     timeoutMs: positiveInteger(draft.timeoutMs, t('timeout'), t),
     maxImageBytes: positiveInteger(draft.maxImageBytes, t('maxBytes'), t),
@@ -1858,6 +1873,7 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(installStyles, 'dsh-vision-toolkit: styles')
   ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'dsh-vision-toolkit: locale')
   installPasteImages(ctx)
+  installSessionMediaControls(ctx)
   ctx.effect(installModelVariantsHider, 'dsh-vision-toolkit: model-selector transparent routing')
   const t = ctx.locale.bind(NS)
   const injected = () => ({ t })
